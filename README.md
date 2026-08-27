@@ -17,6 +17,8 @@ CareTrace is a provenance-first longitudinal care note prototype built for the N
 - Preference embeddings with bounded similarity bonuses; critical floors cannot be suppressed.
 - A minimal patient view exposing only clinician-approved summaries/instructions.
 
+Trust outcomes use one vocabulary everywhere: `verified` is a backend-validated exact quote match, `supported` is a backend-validated normalized match, `review_required` is a candidate that cannot be resolved safely, and `abstained` means no eligible claim was produced. When evidence matches more than once, every immutable source span is returned and the item is labelled as having multiple sources. Only `verified` and `supported` items can enter Glance; `review_required` and `abstained` never become automatic highlights.
+
 ## Quick start
 
 Prerequisites: Python 3.11+, Node.js 20+ and pnpm. Ollama is optional because the default local demo provider is deterministic.
@@ -68,8 +70,9 @@ Ollama must have both configured models available. Use `AI_PROVIDER=fixture` for
 
 - `clinic_id` and role are read from a signed token and rechecked against the database. Client-supplied scope is never trusted.
 - Patients receive only approved patient-facing rows; their token is rejected by timeline, raw source, comment, audit and Glance endpoints.
+- `POST /patients/{id}/entries` intentionally accepts a linked patient's `patient_input` contribution, but it is a write-only internal intake path for that patient: the same patient token still cannot read timeline entries. Patient-visible output is exclusively an approved `PatientFacingItem`.
 - Staff and clinicians own separate sections. A clinician cannot overwrite a staff section, and vice versa.
-- Raw content and redaction maps are encrypted with Fernet. Set `ENCRYPTION_KEY` to a stable Fernet key outside local demo use; changing it makes prior encrypted data unreadable.
+- SQLite + field-level encryption: raw content, redaction maps and patient names are encrypted with Fernet. Set `ENCRYPTION_KEY` to a stable Fernet key outside local demo use; changing it makes prior encrypted data unreadable. The SQLite database file itself is not claimed to be encrypted.
 - Known patient names, phone patterns and IC/ID patterns are redacted before the provider call. A post-redaction leak check blocks processing when these signals remain.
 - Logs and audit events contain metadata only, never source text, prompts or decrypted fields.
 - Local development uses HTTP. A deployed environment must terminate TLS at a trusted reverse proxy and provide secrets through its secret manager.
@@ -95,15 +98,13 @@ pytest
 python scripts/benchmark_glance.py
 ```
 
-The five requested micro-test files are included, with additional PHI, abstention, span integrity and risk-boundary coverage. The benchmark warms the API, inserts at least 500 patient timeline entries, performs 500 loopback requests and calculates P95 without invoking an LLM.
+The four required micro-test modules are included, plus the learned bonus `test_self_learning_importance.py`. Additional coverage checks PHI handling, `review_required`/`abstained` outcomes, span integrity and the risk floor boundary. The benchmark warms the API, inserts at least 500 patient timeline entries, performs 500 loopback requests and calculates P95 without invoking an LLM.
 
 ## Repository guide
 
 - `backend/app/`: data models, API, security, redaction, provider adapters and business rules.
 - `backend/tests/`: required micro-tests plus trust-boundary tests.
 - `frontend/src/`: English clinician/staff/admin and patient demo UI.
-- `docs/`: API contract, technical brief and demo script.
-- `output/pdf/`: submission-ready technical brief PDF.
+- `DocSubmission/`: API contract, Markdown technical brief, demo script and submission-ready PDF.
 
-See [API.md](docs/API.md) for endpoint contracts and [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for a short recording sequence.
-
+See [API.md](DocSubmission/API.md) for endpoint contracts and [DEMO_SCRIPT.md](DocSubmission/DEMO_SCRIPT.md) for a short recording sequence.

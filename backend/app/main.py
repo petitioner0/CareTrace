@@ -147,6 +147,12 @@ def get_glance(
             select(GlanceSnapshot).where(GlanceSnapshot.patient_id == patient_id, GlanceSnapshot.viewer_id == viewer_id)
         )
     items = json.loads(snapshot.items_json) if snapshot else []
+    if items and any("source_count" not in item for item in items):
+        rebuild_glance(db, patient_id, viewer_id)
+        snapshot = db.scalar(
+            select(GlanceSnapshot).where(GlanceSnapshot.patient_id == patient_id, GlanceSnapshot.viewer_id == viewer_id)
+        )
+        items = json.loads(snapshot.items_json) if snapshot else []
     return {
         "patient_id": patient_id,
         "generated_at": snapshot.generated_at.isoformat() if snapshot else None,
@@ -173,7 +179,7 @@ def get_timeline(
 def add_manual_entry(
     patient_id: str,
     payload: ManualEntryCreate,
-    principal: Principal = Depends(current_principal),
+    principal: Principal = Depends(require_roles("patient", "staff", "clinician", "admin")),
     db: Session = Depends(get_db),
 ) -> dict:
     patient = ensure_patient_scope(db, patient_id, principal)
@@ -352,35 +358,62 @@ def get_provenance(
     db: Session = Depends(get_db),
 ) -> dict:
     edge = db.get(ProvenanceEdge, edge_id)
-    entry = db.get(TimelineEntry, edge.source_entry_id) if edge else None
-    version = db.get(EntryVersion, edge.source_entry_version_id) if edge else None
-    if not edge or not entry or not version or entry.clinic_id != principal.clinic_id:
+    if not edge:
         raise HTTPException(status_code=404, detail="Provenance not found")
-    snapshot = json.loads(version.snapshot_json)
-    source = snapshot.get(edge.source_section_key, {}).get("content", "")
-    quote = source[edge.start_offset : edge.end_offset]
-    if quote_digest(quote) != edge.quote_hash:
-        raise HTTPException(status_code=409, detail="Stored provenance failed integrity validation")
-    original_quote = None
-    if entry.interaction_id:
-        interaction = db.get(Interaction, entry.interaction_id)
-        original = cipher.decrypt(interaction.raw_content_encrypted)
-        original_quote = original[edge.original_start_offset : edge.original_end_offset]
+
+    related_edges = list(
+        db.scalars(
+            select(ProvenanceEdge).where(
+                ProvenanceEdge.target_type == edge.target_type,
+                ProvenanceEdge.target_id == edge.target_id,
+            )
+        )
+    )
+    related_edges.sort(key=lambda item: item.id != edge.id)
+    sources = []
+    for related_edge in related_edges:
+        entry = db.get(TimelineEntry, related_edge.source_entry_id)
+        version = db.get(EntryVersion, related_edge.source_entry_version_id)
+        if not entry or not version or entry.clinic_id != principal.clinic_id:
+            raise HTTPException(status_code=404, detail="Provenance not found")
+        snapshot = json.loads(version.snapshot_json)
+        source = snapshot.get(related_edge.source_section_key, {}).get("content", "")
+        quote = source[related_edge.start_offset : related_edge.end_offset]
+        if quote_digest(quote) != related_edge.quote_hash:
+            raise HTTPException(status_code=409, detail="Stored provenance failed integrity validation")
+        original_quote = None
+        if entry.interaction_id and related_edge.source_section_key == "raw":
+            interaction = db.get(Interaction, entry.interaction_id)
+            original = cipher.decrypt(interaction.raw_content_encrypted)
+            original_quote = original[related_edge.original_start_offset : related_edge.original_end_offset]
+        sources.append(
+            {
+                "id": related_edge.id,
+                "source_entry_id": entry.id,
+                "source_entry_title": entry.title,
+                "source_entry_type": entry.entry_type,
+                "source_entry_created_at": entry.created_at.isoformat(),
+                "source_entry_version_id": version.id,
+                "entry_version": version.version,
+                "section_key": related_edge.source_section_key,
+                "start_offset": related_edge.start_offset,
+                "end_offset": related_edge.end_offset,
+                "quote": quote,
+                "original_quote": original_quote,
+                "original_start_offset": related_edge.original_start_offset,
+                "original_end_offset": related_edge.original_end_offset,
+                "match_method": related_edge.match_method,
+                "source_support": related_edge.source_support,
+                "integrity": "verified",
+            }
+        )
+
+    primary = sources[0]
     return {
-        "id": edge.id,
-        "source_entry_id": entry.id,
-        "source_entry_version_id": version.id,
-        "entry_version": version.version,
-        "section_key": edge.source_section_key,
-        "start_offset": edge.start_offset,
-        "end_offset": edge.end_offset,
-        "quote": quote,
-        "original_quote": original_quote,
-        "original_start_offset": edge.original_start_offset,
-        "original_end_offset": edge.original_end_offset,
-        "match_method": edge.match_method,
-        "source_support": edge.source_support,
-        "integrity": "verified",
+        **primary,
+        "sources": sources,
+        "source_count": len(sources),
+        "multiple_sources": len(sources) > 1,
     }
 
 

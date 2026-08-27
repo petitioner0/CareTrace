@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
+from reportlab.graphics.shapes import Drawing, Line, Polygon, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
@@ -22,7 +24,7 @@ from reportlab.platypus import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT = ROOT / "output" / "pdf" / "CareTrace_Technical_Brief.pdf"
+OUTPUT = ROOT / "DocSubmission" / "CareTrace_Technical_Brief.pdf"
 
 INK = colors.HexColor("#18342E")
 GREEN = colors.HexColor("#176C57")
@@ -77,7 +79,7 @@ def architecture_table():
     rows = [
         [P("React / Vite", "Boxx"), P("REST / JSON + signed token", "Boxx"), P("FastAPI + RBAC", "Boxx")],
         [P("Fast UI", "Smallx"), P("Clinic scope on every call", "Smallx"), P("Service + validation", "Smallx")],
-        [P("Precomputed Glance", "Boxx"), P("SQLAlchemy", "Boxx"), P("Encrypted SQLite", "Boxx")],
+        [P("Precomputed Glance", "Boxx"), P("SQLAlchemy", "Boxx"), P("SQLite + field-level encryption", "Boxx")],
     ]
     table = Table(rows, colWidths=[53 * mm, 64 * mm, 53 * mm], rowHeights=[12 * mm, 9 * mm, 12 * mm])
     table.setStyle(TableStyle([
@@ -108,6 +110,92 @@ def flow_table():
     return table
 
 
+def relational_schema():
+    width, height = 170 * mm, 55 * mm
+    drawing = Drawing(width, height)
+    node_width, node_height = 29 * mm, 8 * mm
+    nodes = {
+        "clinic": (0, 45, "Clinic"),
+        "patient": (35, 45, "Patient"),
+        "interaction": (70, 45, "Interaction"),
+        "entry": (105, 45, "TimelineEntry\nAI-scribed subtype"),
+        "user": (0, 30, "User"),
+        "patient_item": (35, 30, "PatientFacingItem"),
+        "section": (70, 30, "EntrySection"),
+        "version": (105, 30, "EntryVersion"),
+        "comment": (140, 30, "CommentThread"),
+        "fact": (35, 15, "ClinicalFact"),
+        "provenance": (70, 15, "ProvenanceEdge"),
+        "highlight": (105, 15, "Highlight"),
+        "glance": (140, 15, "GlanceSnapshot"),
+        "feedback": (70, 0, "FeedbackEvent"),
+        "preference": (105, 0, "PreferenceProfile"),
+    }
+
+    def box_geometry(key):
+        x, y, _ = nodes[key]
+        return x * mm, y * mm, node_width, node_height
+
+    def arrow(source, target, label="", route=()):
+        sx, sy, sw, sh = box_geometry(source)
+        tx, ty, tw, th = box_geometry(target)
+        scx, scy = sx + sw / 2, sy + sh / 2
+        tcx, tcy = tx + tw / 2, ty + th / 2
+
+        def edge_point(cx, cy, half_width, half_height, toward_x, toward_y):
+            dx, dy = toward_x - cx, toward_y - cy
+            candidates = []
+            if dx:
+                candidates.append(half_width / abs(dx))
+            if dy:
+                candidates.append(half_height / abs(dy))
+            scale = min(candidates)
+            return cx + dx * scale, cy + dy * scale
+
+        route_points = [(x * mm, y * mm) for x, y in route]
+        first = route_points[0] if route_points else (tcx, tcy)
+        last = route_points[-1] if route_points else (scx, scy)
+        points = [edge_point(scx, scy, sw / 2, sh / 2, first[0], first[1]), *route_points]
+        points.append(edge_point(tcx, tcy, tw / 2, th / 2, last[0], last[1]))
+        for (x1, y1), (x2, y2) in zip(points, points[1:]):
+            drawing.add(Line(x1, y1, x2, y2, strokeColor=MUTED, strokeWidth=.65))
+        x1, y1 = points[-2]
+        x2, y2 = points[-1]
+        angle = math.atan2(y2 - y1, x2 - x1)
+        arrow_size = 2.2 * mm
+        left = (x2 - arrow_size * math.cos(angle - .42), y2 - arrow_size * math.sin(angle - .42))
+        right = (x2 - arrow_size * math.cos(angle + .42), y2 - arrow_size * math.sin(angle + .42))
+        drawing.add(Polygon([x2, y2, left[0], left[1], right[0], right[1]], fillColor=MUTED, strokeColor=MUTED))
+        if label:
+            segments = list(zip(points, points[1:]))
+            label_start, label_end = max(segments, key=lambda segment: math.dist(*segment))
+            drawing.add(String((label_start[0] + label_end[0]) / 2 + 1.2 * mm, (label_start[1] + label_end[1]) / 2 + 1.2 * mm, label, fontName="Helvetica", fontSize=5.3, fillColor=MUTED))
+
+    for source, target, label, route in [
+        ("clinic", "patient", "1:N", ()), ("clinic", "user", "1:N", ()),
+        ("patient", "interaction", "1:N", ()), ("patient", "entry", "1:N", ((49.5, 54), (119.5, 54))),
+        ("patient", "patient_item", "1:N", ()), ("interaction", "entry", "1:N", ()),
+        ("entry", "section", "1:N", ()), ("entry", "version", "1:N", ()),
+        ("entry", "comment", "1:N", ()), ("entry", "fact", "1:N", ((66, 41), (66, 26))),
+        ("fact", "provenance", "N:1", ()), ("version", "provenance", "1:N", ()),
+        ("highlight", "provenance", "N:1", ()), ("highlight", "glance", "N:M", ()),
+        ("highlight", "feedback", "1:N", ()), ("feedback", "preference", "N:1", ()),
+        ("preference", "glance", "1:N", ()),
+    ]:
+        arrow(source, target, label, route)
+
+    for key, (x_mm, y_mm, label) in nodes.items():
+        fill = PALE if key in {"clinic", "patient", "user"} else colors.HexColor("#F6F8F7")
+        if key in {"provenance", "highlight", "glance", "patient_item"}:
+            fill = colors.HexColor("#EEF2F7")
+        drawing.add(Rect(x_mm * mm, y_mm * mm, node_width, node_height, rx=2, ry=2, fillColor=fill, strokeColor=LINE, strokeWidth=.7))
+        lines = label.split("\n")
+        for index, line in enumerate(lines):
+            baseline = y_mm * mm + node_height / 2 + (len(lines) - 1) * 2.4 - index * 4.8
+            drawing.add(String(x_mm * mm + node_width / 2, baseline, line, fontName="Helvetica-Bold", fontSize=5.8, textAnchor="middle", fillColor=INK))
+    return drawing
+
+
 def build():
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     doc = BriefDoc(str(OUTPUT))
@@ -116,7 +204,7 @@ def build():
         P("CareTrace", "Hero"),
         P("A provenance-first longitudinal care note that compresses fragmented interactions for action while keeping every AI-supported highlight anchored to immutable evidence.", "Deck"),
         architecture_table(), Spacer(1, 7 * mm), flow_table(), Spacer(1, 5 * mm),
-        section("Why this shape", "Healthcare collaboration needs compression, but trust fails when a summary cannot show where it came from. CareTrace therefore treats AI output as a candidate, not a fact. The backend validates evidence, owns offsets, stores provenance, and may abstain. Page loads read a precomputed snapshot and never wait for an LLM."),
+        section("Why this shape", "Healthcare collaboration needs compression, but trust fails when a summary cannot show where it came from. CareTrace therefore treats AI output as a candidate, not a fact. The backend validates evidence, owns offsets, stores provenance, and may return abstained. Page loads read a precomputed Glance snapshot and never wait for an LLM."),
         P("Trust boundary", "H2x"),
         P("Raw interactions are committed and encrypted before AI work. Known names, phones and IC/ID patterns are redacted and checked before a provider call. Provider failures preserve the source and previous Glance. Logs and audit events contain metadata only."),
         P("Provider boundary", "H2x"),
@@ -126,19 +214,11 @@ def build():
         PageBreak(),
         P("02  /  PROVENANCE, COLLABORATION AND RANKING", "Kicker"),
         P("Evidence before emphasis", "Hero"),
-        section("Backend-owned provenance", "The LLM returns source_ref, a verbatim evidence_quote and a normalized candidate - never character offsets. The backend searches only the referenced immutable source version. A unique exact match is verified; a unique Unicode/whitespace-normalized match is supported. Missing or repeated matches are review_required and cannot become automatic highlights."),
+        section("Backend-owned provenance", "The LLM returns source_ref, a verbatim evidence_quote and a normalized candidate - never character offsets. The backend searches only the referenced immutable source version. Trust outcomes are verified (backend-validated exact quote), supported (backend-validated normalized match), review_required (missing, malformed or wrong source), and abstained (no eligible claim). Multiple matches retain every immutable source span and are labelled explicitly. Only verified and supported can enter Glance."),
         P("Redaction creates a boundary map from redacted positions to the encrypted original. The stored ProvenanceEdge contains source entry/version, section, both coordinate systems, match method and a quote hash. Every read revalidates the hash. Later edits create new versions, so citations do not drift."),
         P("Relational spine", "H1x"),
-        Table([
-            [P("AUTHORITY", "Kicker"), P("RECORD", "Kicker"), P("TRUST + ACTION", "Kicker")],
-            [P("Clinic<br/>User<br/>Patient", "Boxx"), P("Interaction<br/>TimelineEntry<br/>EntrySection<br/>EntryVersion", "Boxx"), P("ClinicalFact<br/>ProvenanceEdge<br/>Highlight<br/>GlanceSnapshot", "Boxx")],
-            [P("Signed token<br/>Clinic scope", "Smallx"), P("Role-owned sections<br/>Immutable snapshots", "Smallx"), P("Comment / Conflict<br/>Feedback / Audit", "Smallx")],
-        ], colWidths=[49 * mm, 61 * mm, 60 * mm], style=TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), PALE), ("BACKGROUND", (0, 1), (-1, -1), colors.white),
-            ("BOX", (0, 0), (-1, -1), .6, LINE), ("INNERGRID", (0, 0), (-1, -1), .4, LINE),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-        ])),
+        relational_schema(),
+        P("Arrows follow stored FK/reference direction. TimelineEntry includes AI-scribed-note subtypes; GlanceSnapshot stores ranked Highlight IDs.", "Smallx"),
         P("Deterministic collaboration", "H1x"),
         P("Staff and clinicians own separate sections. Independent section counters allow simultaneous edits without overwriting each other; a stale same-section write returns 409. Revert restores one authorized section into a new version. Conflicting allergy or dosage facts enter a review queue; only a clinician can select the authoritative fact, and both sources remain."),
         P("Bounded adaptive ranking", "H1x"),
@@ -149,19 +229,20 @@ def build():
         P("03  /  SECURITY, EVALUATION AND SCOPE", "Kicker"),
         P("Know when the system is wrong", "Hero"),
         Table([
-            [P("VERIFIED", "Kicker"), P("SUPPORTED", "Kicker"), P("ABSTAIN", "Kicker")],
-            [P("Unique exact quote<br/>Schema valid", "Boxx"), P("Unique normalized match<br/>Visible label", "Boxx"), P("Missing / repeated quote<br/>No automatic highlight", "Boxx")],
-        ], colWidths=[56.5 * mm] * 3, style=TableStyle([
+            [P("verified", "Kicker"), P("supported", "Kicker"), P("review_required", "Kicker"), P("abstained", "Kicker")],
+            [P("Unique exact quote<br/>Auto-eligible", "Boxx"), P("Unique normalized match<br/>Auto-eligible", "Boxx"), P("Ambiguous / missing / malformed<br/>No automatic highlight", "Boxx"), P("No eligible claim<br/>No automatic highlight", "Boxx")],
+        ], colWidths=[42.4 * mm] * 4, style=TableStyle([
             ("BACKGROUND", (0, 0), (0, 0), PALE), ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#EEF2F7")),
-            ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#FFF1EE")), ("BOX", (0, 0), (-1, -1), .6, LINE),
+            ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#FFF7E8")), ("BACKGROUND", (3, 0), (3, 0), colors.HexColor("#FFF1EE")),
+            ("BOX", (0, 0), (-1, -1), .6, LINE),
             ("INNERGRID", (0, 0), (-1, -1), .4, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ])), Spacer(1, 5 * mm),
         P("Security and patient boundary", "H1x"),
-        P("Passwords use scrypt and tokens use HMAC-SHA256. Every query rechecks subject, role and clinic against SQLite. Patients are linked to one patient ID and can read only clinician-approved summary/instruction rows; timeline, Glance, provenance, versions, comments and audit endpoints reject their token. Local HTTP is for demonstration only; deployment requires TLS termination and managed secrets."),
+        P("Passwords use scrypt and tokens use HMAC-SHA256. Every query rechecks subject, role and clinic against SQLite. SQLite uses field-level encryption for raw interactions, redaction maps and patient names; the database file is not claimed to be encrypted. Patients may submit their own patient_input through POST /entries but cannot read the internal timeline. Only clinician-approved PatientFacingItem rows are visible to them. Local HTTP is for demonstration only; deployment requires TLS termination and managed secrets."),
         P("Automated evaluation", "H1x"),
-        P("The required five micro-test modules cover cross-role writes, patient exclusions, clinic isolation, version increments, revert, metadata-only audit, immutable provenance, concurrent sections, deterministic 409 conflicts and adaptive importance. Additional tests verify that LLM offsets are ignored, ambiguous quotes abstain, PHI never reaches a spy provider, ordinary symptom text creates no risk floor and critical items survive rejection."),
+        P("Four required micro-test modules cover RBAC, revision history, highlight provenance and concurrent edits. The separate bonus test covers self-learning importance and its bounded learned bonus. Additional tests verify multi-source matches, review_required and abstained outcomes, PHI blocking, the risk floor boundary and critical-item survival after rejection."),
         Table([
             [P("1.16 ms", "Metric"), P("1.44 ms", "Metric"), P("< 300 ms", "Metric")],
             [P("median", "Smallx"), P("P95", "Smallx"), P("target", "Smallx")],

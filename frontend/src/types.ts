@@ -24,12 +24,17 @@ export interface GlanceItem {
   risk_floor: number
   source_support: 'verified' | 'supported'
   provenance_id: string
+  provenance_ids: string[]
+  source_count: number
+  multiple_sources: boolean
   unresolved: boolean
   status: string
   pinned: boolean
   score: number
   score_breakdown: { rule_score: number; learned_bonus: number; risk_floor: number }
 }
+
+export type TrustOutcome = 'verified' | 'supported' | 'review_required' | 'abstained'
 
 export interface Glance {
   patient_id: string
@@ -77,17 +82,35 @@ export interface Conflict {
   fact_b: { id: string; value: string; quote: string }
 }
 
-export interface Provenance {
+export interface ProvenanceSource {
   id: string
   source_entry_id: string
+  source_entry_title: string
+  source_entry_type: string
+  source_entry_created_at: string
   source_entry_version_id: string
   entry_version: number
+  section_key: string
+  start_offset: number
+  end_offset: number
   quote: string
   original_quote: string | null
   original_start_offset: number
   original_end_offset: number
   match_method: string
-  source_support: string
-  integrity: string
+  source_support: Extract<TrustOutcome, 'verified' | 'supported'>
+  integrity: 'verified'
 }
 
+export interface Provenance extends ProvenanceSource {
+  sources: ProvenanceSource[]
+  source_count: number
+  multiple_sources: boolean
+}
+
+export interface PatientFacingItem {
+  id: string
+  item_type: string
+  content: string
+  approved_at: string
+}

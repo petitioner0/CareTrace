@@ -4,7 +4,7 @@ import json
 
 from app.ai import FixtureProvider
 from app.models import EntrySection, EntryVersion, Highlight, Interaction, ProcessingJob, ProvenanceEdge, TimelineEntry
-from app.provenance import match_quote
+from app.provenance import match_quote, match_quotes
 from app.schemas import CandidateBatch, CandidateFact
 from app.security import Principal, cipher
 from app.services import create_interaction, process_job
@@ -46,11 +46,58 @@ def test_seeded_highlights_resolve_to_immutable_entry_span(client, auth, db):
     assert provenance_after["source_entry_version_id"] == provenance_before["source_entry_version_id"]
 
 
-def test_quote_matching_is_backend_owned_and_ambiguous_quotes_abstain():
+def test_quote_matching_is_backend_owned_and_returns_every_repeated_match():
     assert match_quote("Alpha beta gamma", "beta").start == 6
     assert match_quote("Alpha   beta", "Alpha beta").support == "supported"
-    assert match_quote("same and same", "same") is None
+    matches = match_quotes("same and same", "same")
+    assert [(match.start, match.end) for match in matches] == [(0, 4), (9, 13)]
     assert match_quote("source", "paraphrase") is None
+
+
+def test_repeated_evidence_returns_and_labels_all_sources(client, auth, db):
+    class RepeatedEvidenceProvider(FixtureProvider):
+        def extract(self, sources):
+            source_ref = next(iter(sources))
+            return CandidateBatch(
+                facts=[
+                    CandidateFact(
+                        source_ref=source_ref,
+                        evidence_quote="Critical action: confirm the active dose.",
+                        normalized_value="confirm active dose",
+                        entity_type="critical_action",
+                        candidate_summary="Confirm the active dose.",
+                    )
+                ]
+            )
+
+    patient = db.get(__import__("app.models", fromlist=["Patient"]).Patient, "patient-amina")
+    principal = Principal("user-clinician", "clinic-demo", "clinician", None, "Dr. Maya Chen")
+    _, job = create_interaction(
+        db,
+        patient,
+        principal,
+        "doctor_consult",
+        "Critical action: confirm the active dose. Critical action: confirm the active dose.",
+        None,
+    )
+    process_job(job.id, __import__("app.database", fromlist=["SessionLocal"]).SessionLocal, RepeatedEvidenceProvider())
+    db.expire_all()
+    highlight = db.query(Highlight).filter_by(text="Confirm the active dose.").one()
+
+    response = client.get(f"/api/provenance/{highlight.provenance_edge_id}", headers=auth("clinician"))
+    assert response.status_code == 200
+    provenance = response.json()
+    assert provenance["multiple_sources"] is True
+    assert provenance["source_count"] == 2
+    assert len(provenance["sources"]) == 2
+    assert len({source["start_offset"] for source in provenance["sources"]}) == 2
+    assert all(source["integrity"] == "verified" for source in provenance["sources"])
+
+    items = client.get("/api/patients/patient-amina/glance", headers=auth("clinician")).json()["items"]
+    item = next(item for item in items if item["id"] == highlight.id)
+    assert item["multiple_sources"] is True
+    assert item["source_count"] == 2
+    assert len(item["provenance_ids"]) == 2
 
 
 def test_longitudinal_insight_keeps_multiple_source_edges(client, db):

@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { api, ApiError } from './api'
-import type { Conflict, Glance, GlanceItem, Patient, Provenance, Role, TimelineEntry, User } from './types'
+import type { Conflict, Glance, GlanceItem, Patient, PatientFacingItem, Provenance, Role, TimelineEntry, User } from './types'
 
 const roleCopy: Record<Role, { label: string; subtitle: string }> = {
   clinician: { label: 'Clinician', subtitle: 'Full clinical review & decisions' },
@@ -64,26 +64,35 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
 }
 
 function SourceDrawer({ source, onClose }: { source: Provenance; onClose: () => void }) {
+  const sources = source.sources?.length ? source.sources : [source]
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <aside className="drawer" onClick={(event) => event.stopPropagation()} aria-label="Source evidence">
         <button className="close-button" onClick={onClose} aria-label="Close source drawer">×</button>
-        <p className="eyebrow">PROVENANCE · INTEGRITY {source.integrity.toUpperCase()}</p>
-        <h2>Exact source evidence</h2>
-        <div className="source-path">
-          <span>Highlight</span><b>→</b><span>Entry v{source.entry_version}</span><b>→</b><span>Exact span</span>
+        <p className="eyebrow">PROVENANCE · ALL SOURCES INTEGRITY VERIFIED</p>
+        <h2>{source.multiple_sources ? `${sources.length} evidence sources` : 'Exact source evidence'}</h2>
+        {source.multiple_sources && <div className="multiple-source-notice">Multiple sources matched this evidence. Review every source below.</div>}
+        <div className="source-list">
+          {sources.map((item, index) => (
+            <section className="source-evidence" key={item.id}>
+              <div className="source-path">
+                <span>Highlight</span><b>→</b><span>Source {index + 1} · Entry v{item.entry_version}</span><b>→</b><span>Exact span</span>
+              </div>
+              <h3>{item.source_entry_title || `Source ${index + 1}`}</h3>
+              <blockquote>{item.original_quote || item.quote}</blockquote>
+              <dl className="metadata-list">
+                <div><dt>Source support</dt><dd>{item.source_support}</dd></div>
+                <div><dt>Match method</dt><dd>{item.match_method}</dd></div>
+                <div><dt>Immutable version</dt><dd>{item.source_entry_version_id.slice(0, 8)}</dd></div>
+                <div><dt>Original span</dt><dd>{item.original_start_offset}–{item.original_end_offset}</dd></div>
+              </dl>
+              <button className="primary-button" onClick={() => {
+                document.getElementById(`entry-${item.source_entry_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                onClose()
+              }}>Jump to this timeline entry</button>
+            </section>
+          ))}
         </div>
-        <blockquote>{source.original_quote || source.quote}</blockquote>
-        <dl className="metadata-list">
-          <div><dt>Source support</dt><dd>{source.source_support}</dd></div>
-          <div><dt>Match method</dt><dd>{source.match_method}</dd></div>
-          <div><dt>Immutable version</dt><dd>{source.source_entry_version_id.slice(0, 8)}</dd></div>
-          <div><dt>Original span</dt><dd>{source.original_start_offset}–{source.original_end_offset}</dd></div>
-        </dl>
-        <button className="primary-button" onClick={() => {
-          document.getElementById(`entry-${source.source_entry_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          onClose()
-        }}>Jump to timeline entry</button>
       </aside>
     </div>
   )
@@ -111,6 +120,7 @@ function HighlightCard({ item, token, onRefresh, onSource }: {
           {critical && <span className="badge risk-critical">Critical floor</span>}
           {!critical && elevated && <span className="badge risk-high">Conflict floor</span>}
           <span className="badge support">✓ {item.source_support}</span>
+          {item.multiple_sources && <span className="badge multiple-source">{item.source_count} sources matched</span>}
           {item.unresolved && <span className="badge action">Open action</span>}
         </div>
         <div className="score"><strong>{Math.round(item.score)}</strong><small>priority</small></div>
@@ -120,6 +130,7 @@ function HighlightCard({ item, token, onRefresh, onSource }: {
       <div className="card-actions">
         <button className="source-button" onClick={() => onSource(item.provenance_id)}>↗ View exact source</button>
         <button onClick={() => feedback('accept')}>Accept</button>
+        <button onClick={() => feedback('highlight')}>Highlight</button>
         <button onClick={() => feedback('pin')}>{item.pinned ? 'Pinned' : 'Pin'}</button>
         <button onClick={() => feedback('reject')}>Reject</button>
         <button className="details-button" onClick={() => setExpanded(!expanded)}>{expanded ? 'Hide score' : 'Why this?'}</button>
@@ -204,7 +215,7 @@ function TimelineCard({ entry, session, onRefresh }: { entry: TimelineEntry; ses
 }
 
 function PatientView({ session, patient, onLogout }: { session: Session; patient: Patient; onLogout: () => void }) {
-  const [items, setItems] = useState<Array<{ id: string; item_type: string; content: string; approved_at: string }>>([])
+  const [items, setItems] = useState<PatientFacingItem[]>([])
   useEffect(() => { api<typeof items>('/patient-facing-items', session.token).then(setItems) }, [session.token])
   return (
     <div className="patient-shell">
@@ -308,7 +319,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
               <p className="eyebrow">OPEN ACTIONS</p><h2>{glance.open_actions.length} items</h2>
               {glance.open_actions.map((item) => <button key={item.id} onClick={() => showSource(item.provenance_id)}><span className={item.risk_floor >= 90 ? 'urgent-dot' : 'action-dot'} />{item.text}</button>)}
               {!glance.open_actions.length && <p className="muted">No unresolved actions.</p>}
-              <div className="trust-legend"><b>Trust legend</b><span><i className="verified-dot" /> Verified: unique exact quote</span><span><i className="supported-dot" /> Supported: normalized unique match</span></div>
+              <div className="trust-legend"><b>Trust outcomes</b><span><i className="verified-dot" /> verified: backend-validated exact quote</span><span><i className="supported-dot" /> supported: backend-validated normalized match</span><span><i className="review-dot" /> review_required: not auto-surfaced</span><span><i className="abstained-dot" /> abstained: no eligible claim</span></div>
             </aside>
           </div>
         )}
@@ -319,7 +330,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
           </div>
         )}
         {!loading && tab === 'conflicts' && (
-          <section className="conflict-panel"><div className="section-title"><div><p className="eyebrow">HUMAN REVIEW REQUIRED</p><h2>Conflicting clinical facts</h2></div></div>{conflicts.map((conflict) => <article key={conflict.id}><div><span className={`badge ${conflict.status === 'open' ? 'risk-high' : 'support'}`}>{conflict.status}</span><b>{conflict.entity_type} conflict</b></div><p>{conflict.fact_a.quote}</p><p>{conflict.fact_b.quote}</p><small>CareTrace flags the conflict; only a clinician can choose the authoritative fact.</small></article>)}</section>
+          <section className="conflict-panel"><div className="section-title"><div><p className="eyebrow">HUMAN REVIEW QUEUE</p><h2>Conflicting clinical facts</h2></div></div>{conflicts.map((conflict) => <article key={conflict.id}><div><span className={`badge ${conflict.status === 'open' ? 'risk-high' : 'support'}`}>{conflict.status}</span><b>{conflict.entity_type} conflict</b></div><p>{conflict.fact_a.quote}</p><p>{conflict.fact_b.quote}</p><small>CareTrace flags the conflict; only a clinician can choose the authoritative fact.</small></article>)}</section>
         )}
       </main>
       {source && <SourceDrawer source={source} onClose={() => setSource(null)} />}
@@ -343,4 +354,3 @@ export default function App() {
   }
   return <CareWorkspace session={session} onLogout={() => setSession(null)} />
 }
-

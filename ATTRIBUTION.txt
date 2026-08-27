@@ -23,7 +23,12 @@ pnpm - MIT License - https://github.com/pnpm/pnpm
 
 Optional local models
 ---------------------
-CareTrace does not redistribute model weights. Operators select and install their Ollama chat and embedding models separately and are responsible for the corresponding model license. The example configuration names qwen3:4b and embeddinggemma; confirm the license shown by the installed Ollama model manifest before use or redistribution.
+CareTrace does not redistribute model weights. The optional model identifiers and their upstream terms are:
+
+Qwen3-4B (Ollama tag qwen3:4b; upstream Qwen/Qwen3-4B) - Apache License 2.0 - https://huggingface.co/Qwen/Qwen3-4B
+EmbeddingGemma 300M (Ollama tag embeddinggemma; upstream google/embeddinggemma-300m) - Gemma Terms of Use, including the Gemma Prohibited Use Policy - https://ai.google.dev/gemma/terms - https://huggingface.co/google/embeddinggemma-300m
+
+Operators who install, use or redistribute either optional model are responsible for complying with its upstream license/terms. EmbeddingGemma is not Apache-2.0 licensed; its weights are governed by the Gemma Terms of Use.
 
 Synthetic data
 --------------

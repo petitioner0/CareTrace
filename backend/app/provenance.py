@@ -37,24 +37,30 @@ def _normalized_with_map(text: str) -> tuple[str, list[int]]:
     return "".join(normalized).strip(), positions
 
 
-def match_quote(source: str, quote: str) -> QuoteMatch | None:
+def match_quotes(source: str, quote: str) -> list[QuoteMatch]:
     if not quote:
-        return None
+        return []
     exact = [match.start() for match in re.finditer(re.escape(quote), source)]
-    if len(exact) == 1:
-        return QuoteMatch(exact[0], exact[0] + len(quote), "exact", "verified")
-    if len(exact) > 1:
-        return None
+    if exact:
+        return [QuoteMatch(start, start + len(quote), "exact", "verified") for start in exact]
 
     normalized_source, source_positions = _normalized_with_map(source)
     normalized_quote, _ = _normalized_with_map(quote)
     if not normalized_quote:
-        return None
+        return []
     matches = [match for match in re.finditer(re.escape(normalized_quote), normalized_source)]
-    if len(matches) != 1:
-        return None
-    match = matches[0]
-    start = source_positions[match.start()]
-    end = source_positions[match.end() - 1] + 1
-    return QuoteMatch(start, end, "normalized", "supported")
+    return [
+        QuoteMatch(
+            source_positions[match.start()],
+            source_positions[match.end() - 1] + 1,
+            "normalized",
+            "supported",
+        )
+        for match in matches
+    ]
 
+
+def match_quote(source: str, quote: str) -> QuoteMatch | None:
+    """Return a match only when it is unique; retained for single-source callers."""
+    matches = match_quotes(source, quote)
+    return matches[0] if len(matches) == 1 else None

@@ -47,6 +47,18 @@ def test_patient_cannot_access_internal_comments_or_raw_ai_notes(client, auth):
     assert "ai_" not in serialized
 
 
+def test_patient_entry_is_intentional_write_only_input(client, auth):
+    patient_headers = auth("patient")
+    response = client.post(
+        "/api/patients/patient-amina/entries",
+        headers=patient_headers,
+        json={"title": "Question for care team", "content": "Please clarify the follow-up instruction."},
+    )
+    assert response.status_code == 201
+    assert response.json()["sections"][0]["key"] == "patient_input"
+    assert client.get("/api/patients/patient-amina/timeline", headers=patient_headers).status_code == 403
+
+
 def test_clinic_scope_is_enforced_server_side(client, auth, db):
     db.add(Clinic(id="clinic-other", name="Other Clinic"))
     db.add(
@@ -60,4 +72,3 @@ def test_clinic_scope_is_enforced_server_side(client, auth, db):
     db.commit()
     response = client.get("/api/patients/patient-other/glance", headers=auth("clinician"))
     assert response.status_code == 404
-

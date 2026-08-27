@@ -32,7 +32,7 @@ from .models import (
     now,
     uid,
 )
-from .provenance import match_quote, quote_digest
+from .provenance import match_quotes, quote_digest
 from .redaction import assert_no_known_phi, redact
 from .security import Principal, cipher
 
@@ -376,27 +376,33 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
         for candidate in candidates.facts:
             if candidate.source_ref != raw_entry.id:
                 continue
-            quote_match = match_quote(result.redacted_text, candidate.evidence_quote)
-            if not quote_match:
+            quote_matches = match_quotes(result.redacted_text, candidate.evidence_quote)
+            if not quote_matches:
                 continue
-            matched_quote = result.redacted_text[quote_match.start : quote_match.end]
+            primary_match = quote_matches[0]
+            matched_quote = result.redacted_text[primary_match.start : primary_match.end]
             fact_id, highlight_id = uid(), uid()
-            edge = ProvenanceEdge(
-                target_type="clinical_fact",
-                target_id=fact_id,
-                source_entry_id=raw_entry.id,
-                source_entry_version_id=raw_version.id,
-                source_section_key="raw",
-                start_offset=quote_match.start,
-                end_offset=quote_match.end,
-                original_start_offset=boundary_map[quote_match.start],
-                original_end_offset=boundary_map[quote_match.end],
-                quote_hash=quote_digest(matched_quote),
-                match_method=quote_match.method,
-                source_support=quote_match.support,
-            )
-            db.add(edge)
+            edges = []
+            for quote_match in quote_matches:
+                quote = result.redacted_text[quote_match.start : quote_match.end]
+                edge = ProvenanceEdge(
+                    target_type="clinical_fact",
+                    target_id=fact_id,
+                    source_entry_id=raw_entry.id,
+                    source_entry_version_id=raw_version.id,
+                    source_section_key="raw",
+                    start_offset=quote_match.start,
+                    end_offset=quote_match.end,
+                    original_start_offset=boundary_map[quote_match.start],
+                    original_end_offset=boundary_map[quote_match.end],
+                    quote_hash=quote_digest(quote),
+                    match_method=quote_match.method,
+                    source_support=quote_match.support,
+                )
+                db.add(edge)
+                edges.append(edge)
             db.flush()
+            primary_edge = edges[0]
             fact = ClinicalFact(
                 id=fact_id,
                 clinic_id=interaction.clinic_id,
@@ -405,7 +411,7 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
                 entity_type=candidate.entity_type,
                 normalized_value=candidate.normalized_value,
                 evidence_quote=matched_quote,
-                provenance_edge_id=edge.id,
+                provenance_edge_id=primary_edge.id,
             )
             unresolved = candidate.entity_type in {"task", "critical_action"}
             risk_floor, risk_source, risk_reason = _risk_for_candidate(interaction, candidate.entity_type)
@@ -419,8 +425,8 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
                 risk_reason=risk_reason,
                 risk_source=risk_source,
                 risk_floor=risk_floor,
-                source_support=quote_match.support,
-                provenance_edge_id=edge.id,
+                source_support=primary_match.support,
+                provenance_edge_id=primary_edge.id,
                 unresolved=unresolved,
                 base_score=_base_score(candidate.entity_type, unresolved, False),
             )
@@ -576,8 +582,8 @@ def create_longitudinal_insight(
         source = sources.get(candidate.source_ref)
         if source is None or candidate.source_ref not in source_meta:
             continue
-        matched = match_quote(source, candidate.evidence_quote)
-        if matched:
+        matches = match_quotes(source, candidate.evidence_quote)
+        for matched in matches:
             matched_candidates.append((candidate, matched, source))
             distinct_sources.add(candidate.source_ref)
     if len(distinct_sources) < 2:
@@ -688,6 +694,18 @@ def rebuild_glance(db: Session, patient_id: str, viewer_id: str | None = None) -
                 continue
             learned_bonus = _profile_bonus(db, current_viewer, highlight)
             final_score = max(highlight.risk_floor, min(100.0, highlight.base_score + learned_bonus))
+            primary_edge = db.get(ProvenanceEdge, highlight.provenance_edge_id)
+            provenance_ids = [highlight.provenance_edge_id]
+            if primary_edge:
+                provenance_ids = list(
+                    db.scalars(
+                        select(ProvenanceEdge.id).where(
+                            ProvenanceEdge.target_type == primary_edge.target_type,
+                            ProvenanceEdge.target_id == primary_edge.target_id,
+                        )
+                    )
+                )
+                provenance_ids.sort(key=lambda edge_id: edge_id != highlight.provenance_edge_id)
             items.append(
                 {
                     "id": highlight.id,
@@ -699,6 +717,9 @@ def rebuild_glance(db: Session, patient_id: str, viewer_id: str | None = None) -
                     "risk_floor": round(highlight.risk_floor, 1),
                     "source_support": highlight.source_support,
                     "provenance_id": highlight.provenance_edge_id,
+                    "provenance_ids": provenance_ids,
+                    "source_count": len(provenance_ids),
+                    "multiple_sources": len(provenance_ids) > 1,
                     "unresolved": highlight.unresolved,
                     "status": highlight.status,
                     "pinned": highlight.id in pinned_ids or highlight.pinned,
