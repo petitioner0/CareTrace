@@ -4,6 +4,21 @@ from app.models import Clinic, Patient
 from app.security import cipher
 
 
+def test_login_requires_matching_credentials(client):
+    rejected = client.post(
+        "/api/auth/token",
+        json={"email": "clinician@caretrace.demo", "password": "wrong-password"},
+    )
+    assert rejected.status_code == 401
+
+    accepted = client.post(
+        "/api/auth/token",
+        json={"email": "clinician@caretrace.demo", "password": "demo123"},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["user"]["role"] == "clinician"
+
+
 def test_staff_and_clinician_cannot_edit_each_others_sections(client, auth):
     staff_headers = auth("staff")
     clinician_headers = auth("clinician")

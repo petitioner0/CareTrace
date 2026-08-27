@@ -12,20 +12,45 @@ const roleCopy: Record<Role, { label: string; subtitle: string }> = {
 type Session = { token: string; user: User }
 
 function Login({ onLogin }: { onLogin: (session: Session) => void }) {
+  const [selectedRole, setSelectedRole] = useState<Role | null>(null)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState<Role | null>(null)
   const [error, setError] = useState('')
 
-  async function login(role: Role) {
-    setBusy(role)
+  function chooseRole(role: Role) {
+    setSelectedRole(role)
+    setEmail('')
+    setPassword('')
+    setShowPassword(false)
+    setError('')
+  }
+
+  function returnToRoles() {
+    setSelectedRole(null)
+    setEmail('')
+    setPassword('')
+    setError('')
+  }
+
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedRole) return
+    setBusy(selectedRole)
     setError('')
     try {
       const response = await api<{ access_token: string; user: User }>('/auth/token', undefined, {
         method: 'POST',
-        body: JSON.stringify({ email: `${role}@caretrace.demo`, password: 'demo123' }),
+        body: JSON.stringify({ email: email.trim(), password }),
       })
+      if (response.user.role !== selectedRole) {
+        setError(`This account is registered as ${roleCopy[response.user.role].label}, not ${roleCopy[selectedRole].label}.`)
+        return
+      }
       onLogin({ token: response.access_token, user: response.user })
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not sign in')
+      setError(reason instanceof Error ? reason.message : 'The email or password did not match this account.')
     } finally {
       setBusy(null)
     }
@@ -44,19 +69,71 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
       </section>
       <section className="login-panel" aria-labelledby="demo-title">
         <p className="eyebrow">SYNTHETIC DEMO</p>
-        <h2 id="demo-title">Choose a role</h2>
-        <p className="muted">Each view uses a real server-issued token and server-enforced permissions.</p>
-        <div className="role-grid">
-          {(Object.keys(roleCopy) as Role[]).map((role) => (
-            <button className="role-card" key={role} onClick={() => login(role)} disabled={Boolean(busy)}>
-              <span className={`role-icon ${role}`}>{role === 'clinician' ? 'MD' : role.slice(0, 2).toUpperCase()}</span>
-              <strong>{roleCopy[role].label}</strong>
-              <small>{busy === role ? 'Signing in…' : roleCopy[role].subtitle}</small>
-              <span className="arrow">→</span>
-            </button>
-          ))}
-        </div>
-        {error && <p className="error-banner">{error}</p>}
+        {!selectedRole ? (
+          <>
+            <h2 id="demo-title">Choose a role</h2>
+            <p className="muted">Choose a view, then sign in with that role's account. Access is still verified by the server.</p>
+            <div className="role-grid">
+              {(Object.keys(roleCopy) as Role[]).map((role) => (
+                <button className="role-card" key={role} onClick={() => chooseRole(role)}>
+                  <span className={`role-icon ${role}`}>{role === 'clinician' ? 'MD' : role.slice(0, 2).toUpperCase()}</span>
+                  <strong>{roleCopy[role].label}</strong>
+                  <small>{roleCopy[role].subtitle}</small>
+                  <span className="arrow">→</span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <button className="back-button" type="button" onClick={returnToRoles}>← Choose another role</button>
+            <div className="selected-role">
+              <span className={`role-icon ${selectedRole}`}>{selectedRole === 'clinician' ? 'MD' : selectedRole.slice(0, 2).toUpperCase()}</span>
+              <div><small>Signing in as</small><h2 id="demo-title">{roleCopy[selectedRole].label}</h2><p>{roleCopy[selectedRole].subtitle}</p></div>
+            </div>
+            <form className="login-form" onSubmit={login}>
+              <label className="login-field">
+                <span>Email address</span>
+                <input
+                  type="email"
+                  name="email"
+                  autoComplete="username"
+                  autoFocus
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder={`${selectedRole}@caretrace.demo`}
+                />
+              </label>
+              <label className="login-field">
+                <span>Password</span>
+                <div className="password-input">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    name="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="Enter password"
+                  />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </label>
+              <div className="demo-credentials">
+                <b>Demo credentials</b>
+                <span>{selectedRole}@caretrace.demo</span>
+                <span>Password: demo123</span>
+              </div>
+              {error && <p className="error-banner" role="alert" aria-live="polite">{error}</p>}
+              <button className="primary-button login-submit" type="submit" disabled={Boolean(busy)}>
+                {busy ? 'Verifying account…' : `Sign in as ${roleCopy[selectedRole].label}`}
+              </button>
+            </form>
+          </>
+        )}
         <p className="demo-note">Synthetic data only · Not clinical decision support</p>
       </section>
     </main>
