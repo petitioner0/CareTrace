@@ -1,0 +1,30 @@
+CareTrace external software and model attribution
+=================================================
+
+Runtime libraries
+-----------------
+FastAPI - MIT License - https://github.com/fastapi/fastapi
+Starlette - BSD-3-Clause License - https://github.com/Kludex/starlette
+Uvicorn - BSD-3-Clause License - https://github.com/Kludex/uvicorn
+SQLAlchemy - MIT License - https://github.com/sqlalchemy/sqlalchemy
+Pydantic - MIT License - https://github.com/pydantic/pydantic
+Cryptography - Apache-2.0 OR BSD-3-Clause - https://github.com/pyca/cryptography
+HTTPX - BSD-3-Clause License - https://github.com/encode/httpx
+React - MIT License - https://github.com/facebook/react
+React DOM - MIT License - https://github.com/facebook/react
+Vite - MIT License - https://github.com/vitejs/vite
+TypeScript - Apache-2.0 License - https://github.com/microsoft/TypeScript
+
+Development and testing
+-----------------------
+Pytest - MIT License - https://github.com/pytest-dev/pytest
+pytest-cov - MIT License - https://github.com/pytest-dev/pytest-cov
+pnpm - MIT License - https://github.com/pnpm/pnpm
+
+Optional local models
+---------------------
+CareTrace does not redistribute model weights. Operators select and install their Ollama chat and embedding models separately and are responsible for the corresponding model license. The example configuration names qwen3:4b and embeddinggemma; confirm the license shown by the installed Ollama model manifest before use or redistribution.
+
+Synthetic data
+--------------
+All patient names, identifiers, notes, interactions and clinical scenarios included in this repository are fictional and authored for this prototype. No external patient dataset is included.
