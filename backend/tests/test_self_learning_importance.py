@@ -44,3 +44,21 @@ def test_plain_symptom_text_does_not_create_a_risk_floor(client, auth, db):
     symptom = next(item for item in db.query(Highlight).all() if "headache" in item.text.lower())
     assert symptom.risk_floor == 0
     assert symptom.risk_source is None
+
+
+def test_resolving_conflict_removes_only_the_conflict_floor(client, auth, db):
+    from app.models import ClinicalFact, Highlight
+
+    headers = auth("clinician")
+    conflict = next(item for item in client.get("/api/conflicts?patient_id=patient-amina", headers=headers).json() if item["status"] == "open")
+    response = client.post(
+        f"/api/conflicts/{conflict['id']}/resolve",
+        headers=headers,
+        json={"winning_fact_id": conflict["fact_b"]["id"], "reason": "Verified against the synthetic prescription."},
+    )
+    assert response.status_code == 200
+    for fact_id in (conflict["fact_a"]["id"], conflict["fact_b"]["id"]):
+        fact = db.get(ClinicalFact, fact_id)
+        highlight = db.query(Highlight).filter_by(provenance_edge_id=fact.provenance_edge_id).one()
+        assert highlight.risk_source is None
+        assert highlight.risk_floor == 0

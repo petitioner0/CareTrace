@@ -443,6 +443,15 @@ def resolve_conflict(
     loser = db.get(ClinicalFact, conflict.fact_b_id if winner.id == conflict.fact_a_id else conflict.fact_a_id)
     winner.clinician_confirmed = True
     loser.status = "superseded"
+    for fact in (winner, loser):
+        linked_highlight = db.scalar(select(Highlight).where(Highlight.provenance_edge_id == fact.provenance_edge_id))
+        if linked_highlight and linked_highlight.risk_source == f"{conflict.entity_type}_conflict":
+            linked_highlight.risk_floor = 0
+            linked_highlight.risk_source = None
+            linked_highlight.risk_reason = "Conflict resolved by clinician"
+        if linked_highlight and fact.id == winner.id:
+            linked_highlight.clinician_confirmed = True
+            linked_highlight.base_score = min(100, linked_highlight.base_score + 10)
     conflict.status = "resolved"
     conflict.resolution_fact_id = winner.id
     conflict.resolved_by = principal.id
