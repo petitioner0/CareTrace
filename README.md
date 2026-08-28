@@ -23,7 +23,15 @@ Trust outcomes use one vocabulary everywhere: `verified` is a backend-validated 
 
 Prerequisites: Python 3.11+, Node.js 20+ and pnpm. Ollama is optional because the default local demo provider is deterministic.
 
-### Backend
+After completing the one-time backend and frontend setup below, start the whole application from the repository root with one command:
+
+```bash
+./dev.sh
+```
+
+Open `http://127.0.0.1:5173`. The command runs both development servers in one terminal; press `Ctrl+C` once to stop both. It also loads the root `.env` file when present. Optional `CARETRACE_BACKEND_PORT` and `CARETRACE_FRONTEND_PORT` environment variables override the default ports.
+
+### One-time setup
 
 ```bash
 cd backend
@@ -31,20 +39,21 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[test]'
 cp ../.env.example ../.env
-uvicorn app.main:app --reload --port 8000
+cd ../frontend
+pnpm install
+cd ..
 ```
 
-The API runs at `http://localhost:8000`; interactive OpenAPI is at `http://localhost:8000/docs`.
+Then use `./dev.sh` whenever you want to run CareTrace. The API runs at `http://localhost:8000`; interactive OpenAPI is at `http://localhost:8000/docs`.
 
-### Frontend
+To run either service separately for debugging, use the original commands:
 
 ```bash
-cd frontend
-pnpm install
-pnpm dev
+cd backend && .venv/bin/python -m uvicorn app.main:app --reload --port 8000
+cd frontend && pnpm dev
 ```
 
-Open `http://localhost:5173`. Choose any demo role. All accounts use password `demo123`; the UI exchanges it for a signed, short-lived token.
+Choose any demo role at `http://localhost:5173`. All accounts use password `demo123`; the UI exchanges it for a signed, short-lived token.
 
 | Role | Email |
 |---|---|
