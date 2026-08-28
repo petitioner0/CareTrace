@@ -140,14 +140,26 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
   )
 }
 
-function SourceDrawer({ source, onClose, onJump }: { source: Provenance; onClose: () => void; onJump: (entryId: string) => void }) {
+function SourceDrawer({ source, riskFloor, riskReason, onClose, onJump }: {
+  source: Provenance
+  riskFloor: number
+  riskReason: string
+  onClose: () => void
+  onJump: (entryId: string) => void
+}) {
   const sources = source.sources?.length ? source.sources : [source]
+  const riskTone = riskFloor >= 90 ? 'critical' : riskFloor >= 75 ? 'elevated' : 'standard'
+  const riskLabel = riskTone === 'critical' ? 'Critical priority' : riskTone === 'elevated' ? 'Elevated priority' : 'Standard priority'
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer" onClick={(event) => event.stopPropagation()} aria-label="Source evidence">
+    <div className={`drawer-backdrop risk-${riskTone}`} onClick={onClose}>
+      <aside className={`drawer risk-${riskTone}`} onClick={(event) => event.stopPropagation()} aria-label="Source evidence">
         <button className="close-button" onClick={onClose} aria-label="Close source drawer">×</button>
         <p className="eyebrow">PROVENANCE · ALL SOURCES INTEGRITY VERIFIED</p>
         <h2>{source.multiple_sources ? `${sources.length} evidence sources` : 'Exact source evidence'}</h2>
+        <div className="source-risk-context">
+          <strong>{riskLabel}</strong>
+          <span>{riskReason}</span>
+        </div>
         {source.multiple_sources && <div className="multiple-source-notice">Multiple sources matched this evidence. Review every source below.</div>}
         <div className="source-list">
           {sources.map((item, index) => (
@@ -176,7 +188,7 @@ function HighlightCard({ item, token, onRefresh, onSource }: {
   item: GlanceItem
   token: string
   onRefresh: () => void
-  onSource: (id: string) => void
+  onSource: (item: GlanceItem) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const critical = item.risk_floor >= 90
@@ -202,7 +214,7 @@ function HighlightCard({ item, token, onRefresh, onSource }: {
       <h3>{item.text}</h3>
       <p className="risk-reason">{item.risk_reason}</p>
       <div className="card-actions">
-        <button className="source-button" onClick={() => onSource(item.provenance_id)}>↗ View exact source</button>
+        <button className="source-button" onClick={() => onSource(item)}>↗ View exact source</button>
         <button onClick={() => feedback('accept')}>Accept</button>
         <button onClick={() => feedback('highlight')}>Highlight</button>
         <button onClick={() => feedback('pin')}>{item.pinned ? 'Pinned' : 'Pin'}</button>
@@ -316,7 +328,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
   const [glance, setGlance] = useState<Glance | null>(null)
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
   const [conflicts, setConflicts] = useState<Conflict[]>([])
-  const [source, setSource] = useState<Provenance | null>(null)
+  const [source, setSource] = useState<{ provenance: Provenance; highlight: GlanceItem } | null>(null)
   const [tab, setTab] = useState<'glance' | 'timeline' | 'conflicts'>('glance')
   const [targetEntryId, setTargetEntryId] = useState<string | null>(null)
   const [pendingJumpId, setPendingJumpId] = useState<string | null>(null)
@@ -358,7 +370,10 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
     return () => window.cancelAnimationFrame(frame)
   }, [loading, pendingJumpId, tab, timeline])
 
-  async function showSource(id: string) { setSource(await api<Provenance>(`/provenance/${id}`, session.token)) }
+  async function showSource(highlight: GlanceItem) {
+    const provenance = await api<Provenance>(`/provenance/${highlight.provenance_id}`, session.token)
+    setSource({ provenance, highlight })
+  }
 
   function jumpToTimelineEntry(entryId: string) {
     setSource(null)
@@ -412,7 +427,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
             </section>
             <aside className="actions-panel">
               <p className="eyebrow">OPEN ACTIONS</p><h2>{glance.open_actions.length} items</h2>
-              {glance.open_actions.map((item) => <button key={item.id} onClick={() => showSource(item.provenance_id)}><span className={item.risk_floor >= 90 ? 'urgent-dot' : 'action-dot'} />{item.text}</button>)}
+              {glance.open_actions.map((item) => <button key={item.id} onClick={() => showSource(item)}><span className={item.risk_floor >= 90 ? 'urgent-dot' : 'action-dot'} />{item.text}</button>)}
               {!glance.open_actions.length && <p className="muted">No unresolved actions.</p>}
               <div className="trust-legend"><b>Trust outcomes</b><span><i className="verified-dot" /> verified: backend-validated exact quote</span><span><i className="supported-dot" /> supported: backend-validated normalized match</span><span><i className="review-dot" /> review_required: not auto-surfaced</span><span><i className="abstained-dot" /> abstained: no eligible claim</span></div>
             </aside>
@@ -428,7 +443,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
           <section className="conflict-panel"><div className="section-title"><div><p className="eyebrow">HUMAN REVIEW QUEUE</p><h2>Conflicting clinical facts</h2></div></div>{conflicts.map((conflict) => <article key={conflict.id}><div><span className={`badge ${conflict.status === 'open' ? 'risk-high' : 'support'}`}>{conflict.status}</span><b>{conflict.entity_type} conflict</b></div><p>{conflict.fact_a.quote}</p><p>{conflict.fact_b.quote}</p><small>CareTrace flags the conflict; only a clinician can choose the authoritative fact.</small></article>)}</section>
         )}
       </main>
-      {source && <SourceDrawer source={source} onClose={() => setSource(null)} onJump={jumpToTimelineEntry} />}
+      {source && <SourceDrawer source={source.provenance} riskFloor={source.highlight.risk_floor} riskReason={source.highlight.risk_reason} onClose={() => setSource(null)} onJump={jumpToTimelineEntry} />}
     </div>
   )
 }
