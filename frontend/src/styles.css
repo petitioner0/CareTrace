@@ -125,7 +125,14 @@ h1, h2 { font-family: Georgia, 'Times New Roman', serif; }
 .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .card-actions button, .timeline-actions button, .entry-section button { border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; background: white; color: #536b63; font-size: 11px; }
 .card-actions .source-button { border-color: #a8cabd; color: var(--green); font-weight: 700; }
+.card-actions button:disabled { cursor: default; opacity: .75; }
+.card-actions .feedback-active { opacity: 1; font-weight: 700; }
+.card-actions .feedback-active.accepted { border-color: #8bbbaa; background: var(--green-soft); color: var(--green); }
+.card-actions .feedback-active.highlighted { border-color: #aab8dc; background: #eef1fb; color: #465d9a; }
+.card-actions .feedback-active.pinned { border-color: #e0bd79; background: var(--amber-soft); color: var(--amber); }
+.card-actions .feedback-active.rejected { border-color: #dda39e; background: var(--red-soft); color: var(--red); }
 .card-actions .details-button { margin-left: auto; border: 0; }
+.feedback-error { margin: 10px 0 0; padding: 9px 10px; border-radius: 7px; background: var(--red-soft); color: var(--red); font-size: 11px; }
 .score-detail { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; padding: 12px; border-radius: 8px; background: #f5f7f5; font-size: 11px; }
 .score-detail p { flex-basis: 100%; margin: 0; color: var(--muted); }
 .actions-panel { align-self: start; position: sticky; top: 20px; padding: 20px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }

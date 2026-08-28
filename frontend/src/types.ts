@@ -30,6 +30,9 @@ export interface GlanceItem {
   unresolved: boolean
   status: string
   pinned: boolean
+  accepted: boolean
+  rejected: boolean
+  highlighted: boolean
   score: number
   score_breakdown: { rule_score: number; learned_bonus: number; risk_floor: number }
 }

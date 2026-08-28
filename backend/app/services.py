@@ -759,13 +759,28 @@ def rebuild_glance(db: Session, patient_id: str, viewer_id: str | None = None) -
             db.execute(delete(GlanceSnapshot).where(GlanceSnapshot.patient_id == patient_id, GlanceSnapshot.viewer_id == current_viewer))
         rejected_ids: set[str] = set()
         pinned_ids: set[str] = set()
+        accepted_ids: set[str] = set()
+        highlighted_ids: set[str] = set()
         if current_viewer:
-            feedback = list(db.scalars(select(FeedbackEvent).where(FeedbackEvent.actor_id == current_viewer)))
-            latest: dict[str, str] = {}
+            feedback = list(
+                db.scalars(
+                    select(FeedbackEvent)
+                    .where(FeedbackEvent.actor_id == current_viewer)
+                    .order_by(FeedbackEvent.created_at, FeedbackEvent.id)
+                )
+            )
+            latest_decision: dict[str, str] = {}
+            latest_pin: dict[str, bool] = {}
             for event in feedback:
-                latest[event.highlight_id] = event.action
-            rejected_ids = {key for key, action in latest.items() if action == "reject"}
-            pinned_ids = {event.highlight_id for event in feedback if event.action == "pin"}
+                if event.action in {"accept", "reject"}:
+                    latest_decision[event.highlight_id] = event.action
+                if event.action in {"pin", "unpin"}:
+                    latest_pin[event.highlight_id] = event.action == "pin"
+                if event.action == "highlight":
+                    highlighted_ids.add(event.highlight_id)
+            rejected_ids = {key for key, action in latest_decision.items() if action == "reject"}
+            accepted_ids = {key for key, action in latest_decision.items() if action == "accept"}
+            pinned_ids = {key for key, is_pinned in latest_pin.items() if is_pinned}
         items = []
         for highlight in highlights:
             if highlight.id in rejected_ids and highlight.risk_floor < 90:
@@ -801,6 +816,9 @@ def rebuild_glance(db: Session, patient_id: str, viewer_id: str | None = None) -
                     "unresolved": highlight.unresolved,
                     "status": highlight.status,
                     "pinned": highlight.id in pinned_ids,
+                    "accepted": highlight.id in accepted_ids,
+                    "rejected": highlight.id in rejected_ids,
+                    "highlighted": highlight.id in highlighted_ids,
                     "score": round(final_score, 1),
                     "score_breakdown": {
                         "rule_score": round(highlight.base_score, 1),
@@ -846,24 +864,25 @@ def apply_feedback(
         profile = PreferenceProfile(clinician_id=principal.id)
         db.add(profile)
         db.flush()
-    embedding = db.scalar(
-        select(EmbeddingRecord).where(EmbeddingRecord.owner_type == "highlight", EmbeddingRecord.owner_id == highlight.id)
-    )
-    if embedding:
-        vector = json.loads(embedding.vector_json)
-    else:
-        active_provider = provider or get_provider()
-        vector = active_provider.embed([highlight.text])[0]
-        db.add(EmbeddingRecord(owner_type="highlight", owner_id=highlight.id, model="feedback", vector_json=json.dumps(vector)))
-    if action == "reject":
-        current = json.loads(profile.negative_vector_json)
-        profile.negative_vector_json = json.dumps(_weighted_centroid(current, profile.negative_weight, vector, 1.0))
-        profile.negative_weight += 1.0
-    else:
-        weight = POSITIVE_WEIGHTS[action]
-        current = json.loads(profile.positive_vector_json)
-        profile.positive_vector_json = json.dumps(_weighted_centroid(current, profile.positive_weight, vector, weight))
-        profile.positive_weight += weight
+    if action != "unpin":
+        embedding = db.scalar(
+            select(EmbeddingRecord).where(EmbeddingRecord.owner_type == "highlight", EmbeddingRecord.owner_id == highlight.id)
+        )
+        if embedding:
+            vector = json.loads(embedding.vector_json)
+        else:
+            active_provider = provider or get_provider()
+            vector = active_provider.embed([highlight.text])[0]
+            db.add(EmbeddingRecord(owner_type="highlight", owner_id=highlight.id, model="feedback", vector_json=json.dumps(vector)))
+        if action == "reject":
+            current = json.loads(profile.negative_vector_json)
+            profile.negative_vector_json = json.dumps(_weighted_centroid(current, profile.negative_weight, vector, 1.0))
+            profile.negative_weight += 1.0
+        else:
+            weight = POSITIVE_WEIGHTS[action]
+            current = json.loads(profile.positive_vector_json)
+            profile.positive_vector_json = json.dumps(_weighted_centroid(current, profile.positive_weight, vector, weight))
+            profile.positive_weight += weight
     profile.version += 1
     if action == "accept":
         highlight.status = "accepted"

@@ -150,7 +150,8 @@ def get_glance(
             select(GlanceSnapshot).where(GlanceSnapshot.patient_id == patient_id, GlanceSnapshot.viewer_id == viewer_id)
         )
     items = json.loads(snapshot.items_json) if snapshot else []
-    if items and any("source_count" not in item for item in items):
+    required_item_state = {"source_count", "accepted", "rejected", "highlighted"}
+    if items and any(not required_item_state.issubset(item) for item in items):
         rebuild_glance(db, patient_id, viewer_id)
         snapshot = db.scalar(
             select(GlanceSnapshot).where(GlanceSnapshot.patient_id == patient_id, GlanceSnapshot.viewer_id == viewer_id)

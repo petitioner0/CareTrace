@@ -187,16 +187,26 @@ function SourceDrawer({ source, riskFloor, riskReason, onClose, onJump }: {
 function HighlightCard({ item, token, onRefresh, onSource }: {
   item: GlanceItem
   token: string
-  onRefresh: () => void
+  onRefresh: () => Promise<void>
   onSource: (item: GlanceItem) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [feedbackBusy, setFeedbackBusy] = useState<string | null>(null)
+  const [feedbackError, setFeedbackError] = useState('')
   const critical = item.risk_floor >= 90
   const elevated = item.risk_floor >= 75
 
   async function feedback(action: string) {
-    await api(`/highlights/${item.id}/feedback`, token, { method: 'POST', body: JSON.stringify({ action }) })
-    onRefresh()
+    setFeedbackBusy(action)
+    setFeedbackError('')
+    try {
+      await api(`/highlights/${item.id}/feedback`, token, { method: 'POST', body: JSON.stringify({ action }) })
+      await onRefresh()
+    } catch (reason) {
+      setFeedbackError(reason instanceof Error ? reason.message : 'Unable to save this feedback.')
+    } finally {
+      setFeedbackBusy(null)
+    }
   }
 
   return (
@@ -214,13 +224,14 @@ function HighlightCard({ item, token, onRefresh, onSource }: {
       <h3>{item.text}</h3>
       <p className="risk-reason">{item.risk_reason}</p>
       <div className="card-actions">
-        <button className="source-button" onClick={() => onSource(item)}>↗ View exact source</button>
-        <button onClick={() => feedback('accept')}>Accept</button>
-        <button onClick={() => feedback('highlight')}>Highlight</button>
-        <button onClick={() => feedback('pin')}>{item.pinned ? 'Pinned' : 'Pin'}</button>
-        <button onClick={() => feedback('reject')}>Reject</button>
-        <button className="details-button" onClick={() => setExpanded(!expanded)}>{expanded ? 'Hide score' : 'Why this?'}</button>
+        <button type="button" className="source-button" onClick={() => onSource(item)}>↗ View exact source</button>
+        <button type="button" className={item.accepted ? 'feedback-active accepted' : ''} aria-pressed={item.accepted} disabled={Boolean(feedbackBusy) || item.accepted} onClick={() => feedback('accept')}>{feedbackBusy === 'accept' ? 'Saving…' : item.accepted ? 'Accepted' : 'Accept'}</button>
+        <button type="button" className={item.highlighted ? 'feedback-active highlighted' : ''} aria-pressed={item.highlighted} disabled={Boolean(feedbackBusy) || item.highlighted} onClick={() => feedback('highlight')}>{feedbackBusy === 'highlight' ? 'Saving…' : item.highlighted ? 'Highlighted' : 'Highlight'}</button>
+        <button type="button" className={item.pinned ? 'feedback-active pinned' : ''} aria-pressed={item.pinned} disabled={Boolean(feedbackBusy)} title={item.pinned ? 'Remove pin' : 'Keep at the top'} onClick={() => feedback(item.pinned ? 'unpin' : 'pin')}>{feedbackBusy === 'pin' || feedbackBusy === 'unpin' ? 'Saving…' : item.pinned ? 'Pinned' : 'Pin'}</button>
+        <button type="button" className={item.rejected ? 'feedback-active rejected' : ''} aria-pressed={item.rejected} disabled={Boolean(feedbackBusy) || item.rejected} onClick={() => feedback('reject')}>{feedbackBusy === 'reject' ? 'Saving…' : item.rejected ? 'Rejected' : 'Reject'}</button>
+        <button type="button" className="details-button" onClick={() => setExpanded(!expanded)}>{expanded ? 'Hide score' : 'Why this?'}</button>
       </div>
+      {feedbackError && <p className="feedback-error" role="alert" aria-live="polite">{feedbackError}</p>}
       {expanded && (
         <div className="score-detail">
           <span>Rule score <b>{item.score_breakdown.rule_score}</b></span>
@@ -384,6 +395,12 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
     finally { setLoading(false) }
   }, [patientId, session.token])
 
+  const refreshGlance = useCallback(async () => {
+    if (!patientId) return
+    const nextGlance = await api<Glance>(`/patients/${patientId}/glance`, session.token)
+    setGlance(nextGlance)
+  }, [patientId, session.token])
+
   useEffect(() => { refresh() }, [refresh])
 
   useEffect(() => {
@@ -463,7 +480,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
             <section>
               <div className="section-title"><div><p className="eyebrow">TOP CARD</p><h2>What needs attention now</h2></div><small>Updated {new Date(glance.generated_at).toLocaleTimeString()}</small></div>
               <div className="policy-notice"><b>Priority support, not diagnosis.</b> {glance.policy_notice}</div>
-              <div className="highlight-list">{glance.items.map((item) => <HighlightCard key={item.id} item={item} token={session.token} onRefresh={refresh} onSource={showSource} />)}</div>
+              <div className="highlight-list">{glance.items.map((item) => <HighlightCard key={item.id} item={item} token={session.token} onRefresh={refreshGlance} onSource={showSource} />)}</div>
             </section>
             <aside className="actions-panel">
               <p className="eyebrow">OPEN ACTIONS</p><h2>{glance.open_actions.length} items</h2>

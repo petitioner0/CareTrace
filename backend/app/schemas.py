@@ -45,7 +45,7 @@ class CommentUpdate(BaseModel):
 
 
 class FeedbackCreate(BaseModel):
-    action: Literal["accept", "reject", "pin", "highlight", "comment", "edit", "confirm_warning"]
+    action: Literal["accept", "reject", "pin", "unpin", "highlight", "comment", "edit", "confirm_warning"]
 
 
 class ConflictResolve(BaseModel):
@@ -74,4 +74,3 @@ class CandidateFact(BaseModel):
 class CandidateBatch(BaseModel):
     model_config = ConfigDict(extra="ignore")
     facts: list[CandidateFact] = Field(default_factory=list)
-

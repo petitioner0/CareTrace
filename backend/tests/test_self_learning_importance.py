@@ -81,3 +81,33 @@ def test_pin_feedback_is_scoped_to_the_viewer(client, auth):
     staff_after = client.get("/api/patients/patient-amina/glance", headers=staff_headers).json()["items"]
     assert next(item for item in clinician_after if item["id"] == target["id"])["pinned"] is True
     assert next(item for item in staff_after if item["id"] == target["id"])["pinned"] is False
+
+    unpin = client.post(
+        f"/api/highlights/{target['id']}/feedback",
+        headers=clinician_headers,
+        json={"action": "unpin"},
+    )
+    assert unpin.status_code == 200
+    clinician_unpinned = client.get("/api/patients/patient-amina/glance", headers=clinician_headers).json()["items"]
+    assert next(item for item in clinician_unpinned if item["id"] == target["id"])["pinned"] is False
+
+
+def test_feedback_states_are_visible_to_the_actor(client, auth):
+    headers = auth("clinician")
+    items = client.get("/api/patients/patient-amina/glance", headers=headers).json()["items"]
+    target = next(item for item in items if item["risk_floor"] >= 90)
+
+    for action, state in (("accept", "accepted"), ("highlight", "highlighted"), ("reject", "rejected")):
+        response = client.post(
+            f"/api/highlights/{target['id']}/feedback",
+            headers=headers,
+            json={"action": action},
+        )
+        assert response.status_code == 200
+        refreshed = client.get("/api/patients/patient-amina/glance", headers=headers).json()["items"]
+        current = next(item for item in refreshed if item["id"] == target["id"])
+        assert current[state] is True
+
+    assert current["accepted"] is False
+    assert current["highlighted"] is True
+    assert current["rejected"] is True
