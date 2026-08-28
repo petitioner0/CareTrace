@@ -236,6 +236,10 @@ function HighlightCard({ item, token, onRefresh, onSource }: {
 function TimelineCard({ entry, session, onRefresh, isTarget = false }: { entry: TimelineEntry; session: Session; onRefresh: () => void; isTarget?: boolean }) {
   const [showHistory, setShowHistory] = useState(false)
   const [versions, setVersions] = useState<Array<{ version: number; changed_section: string; created_at: string }>>([])
+  const [showCommentForm, setShowCommentForm] = useState(false)
+  const [commentText, setCommentText] = useState('')
+  const [commentSubmitting, setCommentSubmitting] = useState(false)
+  const [commentError, setCommentError] = useState('')
   const ownedKeys: Partial<Record<Role, string[]>> = {
     staff: ['staff_note'], clinician: ['clinician_note', 'plan'], admin: ['admin_note'], patient: ['patient_input'],
   }
@@ -262,11 +266,22 @@ function TimelineCard({ entry, session, onRefresh, isTarget = false }: { entry: 
     }
   }
 
-  async function comment() {
-    const content = window.prompt('Add an internal comment')
+  async function comment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const content = commentText.trim()
     if (!content) return
-    await api(`/entries/${entry.id}/comments`, session.token, { method: 'POST', body: JSON.stringify({ content }) })
-    onRefresh()
+    setCommentSubmitting(true)
+    setCommentError('')
+    try {
+      await api(`/entries/${entry.id}/comments`, session.token, { method: 'POST', body: JSON.stringify({ content }) })
+      setCommentText('')
+      setShowCommentForm(false)
+      onRefresh()
+    } catch (reason) {
+      setCommentError(reason instanceof Error ? reason.message : 'Unable to add this comment.')
+    } finally {
+      setCommentSubmitting(false)
+    }
   }
 
   return (
@@ -291,10 +306,21 @@ function TimelineCard({ entry, session, onRefresh, isTarget = false }: { entry: 
         </div>
       )}
       <div className="timeline-actions">
-        {session.user.role !== 'patient' && <button onClick={comment}>Add comment</button>}
+        {session.user.role !== 'patient' && <button onClick={() => { setShowCommentForm(!showCommentForm); setCommentError('') }} aria-expanded={showCommentForm}>{showCommentForm ? 'Close comment' : 'Add comment'}</button>}
         {session.user.role !== 'patient' && <button onClick={loadHistory}>{showHistory ? 'Hide history' : 'Revision history'}</button>}
         {canEdit && <span className="editable-note">Editable only by {session.user.role}</span>}
       </div>
+      {showCommentForm && (
+        <form className="comment-form" onSubmit={comment}>
+          <label htmlFor={`comment-${entry.id}`}>Internal care-team comment</label>
+          <textarea id={`comment-${entry.id}`} value={commentText} onChange={(event) => setCommentText(event.target.value)} rows={3} maxLength={2000} required autoFocus disabled={commentSubmitting} placeholder="Add context, a question, or a handoff note…" />
+          {commentError && <p className="note-status error" role="alert" aria-live="polite">{commentError}</p>}
+          <div>
+            <button type="button" onClick={() => { setShowCommentForm(false); setCommentText(''); setCommentError('') }} disabled={commentSubmitting}>Cancel</button>
+            <button className="primary-button" type="submit" disabled={commentSubmitting || !commentText.trim()}>{commentSubmitting ? 'Adding comment…' : 'Add comment'}</button>
+          </div>
+        </form>
+      )}
       {showHistory && <div className="history-list">{versions.map((version) => <span key={version.version}>v{version.version} · {version.changed_section || 'created'}</span>)}</div>}
     </article>
   )
