@@ -189,7 +189,6 @@ class Highlight(Base):
     clinician_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     base_score: Mapped[float] = mapped_column(Float, default=0)
     status: Mapped[str] = mapped_column(String(30), default="suggested")
-    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -242,6 +241,17 @@ class ProcessingJob(Base):
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class ExtractionOutcome(Base):
+    __tablename__ = "extraction_outcomes"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    job_id: Mapped[str] = mapped_column(ForeignKey("processing_jobs.id"), index=True)
+    candidate_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(30), index=True)
+    reason_code: Mapped[str] = mapped_column(String(80))
+    provenance_edge_id: Mapped[str | None] = mapped_column(ForeignKey("provenance_edges.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class PatientFacingItem(Base):

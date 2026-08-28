@@ -6,6 +6,7 @@ import math
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ from .models import (
     EmbeddingRecord,
     EntrySection,
     EntryVersion,
+    ExtractionOutcome,
     FeedbackEvent,
     GlanceSnapshot,
     Highlight,
@@ -34,6 +36,7 @@ from .models import (
 )
 from .provenance import match_quotes, quote_digest
 from .redaction import assert_no_known_phi, redact
+from .schemas import CandidateBatch
 from .security import Principal, cipher
 
 
@@ -53,6 +56,8 @@ POSITIVE_WEIGHTS = {
     "edit": 1.5,
     "confirm_warning": 2.0,
 }
+
+TRUST_OUTCOMES = ("verified", "supported", "review_required", "abstained")
 
 
 def ensure_patient_scope(db: Session, patient_id: str, principal: Principal) -> Patient:
@@ -263,6 +268,25 @@ def create_interaction(
     return interaction, job
 
 
+def _record_extraction_outcome(
+    db: Session,
+    job_id: str,
+    outcome: str,
+    reason_code: str,
+    candidate_index: int | None = None,
+    provenance_edge_id: str | None = None,
+) -> ExtractionOutcome:
+    record = ExtractionOutcome(
+        job_id=job_id,
+        candidate_index=candidate_index,
+        outcome=outcome,
+        reason_code=reason_code,
+        provenance_edge_id=provenance_edge_id,
+    )
+    db.add(record)
+    return record
+
+
 def _risk_for_candidate(interaction: Interaction, entity_type: str) -> tuple[float, str | None, str]:
     if interaction.synthetic_risk_tag:
         floor = {"low": 20.0, "high": 75.0, "critical": 90.0}[interaction.synthetic_risk_tag]
@@ -336,6 +360,7 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
         job.status = "processing"
         job.attempts += 1
         job.error_code = None
+        db.execute(delete(ExtractionOutcome).where(ExtractionOutcome.job_id == job.id))
         db.commit()
         interaction = db.get(Interaction, job.interaction_id)
         patient = db.get(Patient, interaction.patient_id)
@@ -345,7 +370,26 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
         original = cipher.decrypt(interaction.raw_content_encrypted)
         patient_name = cipher.decrypt(patient.name_encrypted)
         result = redact(original, [patient_name])
-        assert_no_known_phi(result.redacted_text, [patient_name])
+        try:
+            assert_no_known_phi(result.redacted_text, [patient_name])
+        except ValueError as exc:
+            if str(exc) != "redaction_review_required":
+                raise
+            _record_extraction_outcome(db, job.id, "abstained", "redaction_policy_blocked")
+            interaction.status = "complete"
+            job.status = "complete"
+            audit(
+                db,
+                None,
+                "ai.processing.completed",
+                "interaction",
+                interaction.id,
+                clinic_id=interaction.clinic_id,
+                provider=settings.ai_provider,
+                trust_outcome_counts={"verified": 0, "supported": 0, "review_required": 0, "abstained": 1},
+            )
+            db.commit()
+            return
         interaction.redacted_content = result.redacted_text
         interaction.redaction_map_encrypted = cipher.encrypt(result.to_json())
         raw_section.content = result.redacted_text
@@ -355,7 +399,13 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
         raw_version = snapshot_entry(db, raw_entry, "raw", None)
 
         active_provider = provider or get_provider()
-        candidates = active_provider.extract({raw_entry.id: result.redacted_text})
+        provider_output_invalid = False
+        try:
+            candidates = CandidateBatch.model_validate(active_provider.extract({raw_entry.id: result.redacted_text}))
+        except (ValidationError, KeyError, TypeError):
+            candidates = CandidateBatch()
+            provider_output_invalid = True
+            _record_extraction_outcome(db, job.id, "review_required", "provider_output_invalid")
         summary_entry = TimelineEntry(
             clinic_id=interaction.clinic_id,
             patient_id=interaction.patient_id,
@@ -373,11 +423,25 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
         supported_lines: list[str] = []
         boundary_map = json.loads(result.to_json())["boundary_map"]
 
-        for candidate in candidates.facts:
+        if not candidates.facts and not provider_output_invalid:
+            _record_extraction_outcome(db, job.id, "abstained", "provider_returned_no_candidates")
+
+        for candidate_index, candidate in enumerate(candidates.facts):
             if candidate.source_ref != raw_entry.id:
+                _record_extraction_outcome(
+                    db, job.id, "review_required", "unknown_source_ref", candidate_index=candidate_index
+                )
+                continue
+            if not candidate.evidence_quote.strip():
+                _record_extraction_outcome(
+                    db, job.id, "review_required", "missing_evidence_quote", candidate_index=candidate_index
+                )
                 continue
             quote_matches = match_quotes(result.redacted_text, candidate.evidence_quote)
             if not quote_matches:
+                _record_extraction_outcome(
+                    db, job.id, "review_required", "evidence_not_found", candidate_index=candidate_index
+                )
                 continue
             primary_match = quote_matches[0]
             matched_quote = result.redacted_text[primary_match.start : primary_match.end]
@@ -403,6 +467,14 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
                 edges.append(edge)
             db.flush()
             primary_edge = edges[0]
+            _record_extraction_outcome(
+                db,
+                job.id,
+                primary_match.support,
+                f"{primary_match.method}_match",
+                candidate_index=candidate_index,
+                provenance_edge_id=primary_edge.id,
+            )
             fact = ClinicalFact(
                 id=fact_id,
                 clinic_id=interaction.clinic_id,
@@ -458,9 +530,14 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
             )
         )
         db.flush()
-        create_longitudinal_insight(db, summary_entry, summary_content, active_provider)
+        if supported_lines:
+            create_longitudinal_insight(db, summary_entry, summary_content, active_provider)
         interaction.status = "complete"
         job.status = "complete"
+        db.flush()
+        outcome_counts = {outcome: 0 for outcome in TRUST_OUTCOMES}
+        for outcome in db.scalars(select(ExtractionOutcome).where(ExtractionOutcome.job_id == job.id)):
+            outcome_counts[outcome.outcome] += 1
         audit(
             db,
             None,
@@ -470,6 +547,7 @@ def process_job(job_id: str, session_factory, provider: LLMProvider & EmbeddingP
             clinic_id=interaction.clinic_id,
             provider=settings.ai_provider,
             supported_fact_count=len(supported_lines),
+            trust_outcome_counts=outcome_counts,
         )
         db.commit()
         rebuild_glance(db, interaction.patient_id)
@@ -687,7 +765,7 @@ def rebuild_glance(db: Session, patient_id: str, viewer_id: str | None = None) -
             for event in feedback:
                 latest[event.highlight_id] = event.action
             rejected_ids = {key for key, action in latest.items() if action == "reject"}
-            pinned_ids = {key for key, action in latest.items() if action == "pin"}
+            pinned_ids = {event.highlight_id for event in feedback if event.action == "pin"}
         items = []
         for highlight in highlights:
             if highlight.id in rejected_ids and highlight.risk_floor < 90:
@@ -722,7 +800,7 @@ def rebuild_glance(db: Session, patient_id: str, viewer_id: str | None = None) -
                     "multiple_sources": len(provenance_ids) > 1,
                     "unresolved": highlight.unresolved,
                     "status": highlight.status,
-                    "pinned": highlight.id in pinned_ids or highlight.pinned,
+                    "pinned": highlight.id in pinned_ids,
                     "score": round(final_score, 1),
                     "score_breakdown": {
                         "rule_score": round(highlight.base_score, 1),
@@ -787,8 +865,6 @@ def apply_feedback(
         profile.positive_vector_json = json.dumps(_weighted_centroid(current, profile.positive_weight, vector, weight))
         profile.positive_weight += weight
     profile.version += 1
-    if action == "pin":
-        highlight.pinned = True
     if action == "accept":
         highlight.status = "accepted"
     if action == "confirm_warning":

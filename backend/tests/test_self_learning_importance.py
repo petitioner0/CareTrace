@@ -62,3 +62,22 @@ def test_resolving_conflict_removes_only_the_conflict_floor(client, auth, db):
         highlight = db.query(Highlight).filter_by(provenance_edge_id=fact.provenance_edge_id).one()
         assert highlight.risk_source is None
         assert highlight.risk_floor == 0
+
+
+def test_pin_feedback_is_scoped_to_the_viewer(client, auth):
+    clinician_headers = auth("clinician")
+    staff_headers = auth("staff")
+    clinician_items = client.get("/api/patients/patient-amina/glance", headers=clinician_headers).json()["items"]
+    target = next(item for item in clinician_items if item["entity_type"] == "dosage")
+
+    response = client.post(
+        f"/api/highlights/{target['id']}/feedback",
+        headers=clinician_headers,
+        json={"action": "pin"},
+    )
+    assert response.status_code == 200
+
+    clinician_after = client.get("/api/patients/patient-amina/glance", headers=clinician_headers).json()["items"]
+    staff_after = client.get("/api/patients/patient-amina/glance", headers=staff_headers).json()["items"]
+    assert next(item for item in clinician_after if item["id"] == target["id"])["pinned"] is True
+    assert next(item for item in staff_after if item["id"] == target["id"])["pinned"] is False

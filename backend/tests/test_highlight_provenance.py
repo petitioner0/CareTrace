@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from app.ai import FixtureProvider
-from app.models import EntrySection, EntryVersion, Highlight, Interaction, ProcessingJob, ProvenanceEdge, TimelineEntry
+from app.models import EntrySection, EntryVersion, ExtractionOutcome, Highlight, Interaction, ProcessingJob, ProvenanceEdge, TimelineEntry
 from app.provenance import match_quote, match_quotes
 from app.schemas import CandidateBatch, CandidateFact
 from app.security import Principal, cipher
@@ -151,3 +151,137 @@ def test_provider_never_receives_phi_and_offsets_from_llm_are_ignored(client, db
     assert "8123 4567" not in combined
     edge = db.query(ProvenanceEdge).join(Highlight, Highlight.provenance_edge_id == ProvenanceEdge.id).filter(Highlight.patient_id == patient.id).order_by(ProvenanceEdge.id.desc()).first()
     assert edge.start_offset != 9999
+
+
+def test_unmatched_candidates_are_persisted_as_review_required(client, auth, db):
+    class MixedTrustProvider(FixtureProvider):
+        def extract(self, sources):
+            source_ref = next(iter(sources))
+            return CandidateBatch(
+                facts=[
+                    CandidateFact(
+                        source_ref=source_ref,
+                        evidence_quote="The follow-up lab order remains unresolved.",
+                        normalized_value="lab order unresolved",
+                        entity_type="task",
+                        candidate_summary="Lab order remains unresolved.",
+                    ),
+                    CandidateFact(
+                        source_ref="unknown-source",
+                        evidence_quote="The follow-up lab order remains unresolved.",
+                        normalized_value="wrong source",
+                        entity_type="task",
+                        candidate_summary="Wrong-source candidate.",
+                    ),
+                    CandidateFact(
+                        source_ref=source_ref,
+                        evidence_quote="This quote is absent from the source.",
+                        normalized_value="missing evidence",
+                        entity_type="task",
+                        candidate_summary="Unmatched candidate.",
+                    ),
+                ]
+            )
+
+    patient = db.get(__import__("app.models", fromlist=["Patient"]).Patient, "patient-amina")
+    principal = Principal("user-clinician", "clinic-demo", "clinician", None, "Dr. Maya Chen")
+    _, job = create_interaction(
+        db,
+        patient,
+        principal,
+        "doctor_consult",
+        "The follow-up lab order remains unresolved.",
+        None,
+    )
+    process_job(job.id, __import__("app.database", fromlist=["SessionLocal"]).SessionLocal, MixedTrustProvider())
+
+    payload = client.get(f"/api/jobs/{job.id}", headers=auth("clinician")).json()
+    assert payload["status"] == "complete"
+    assert payload["trust_summary"] == {
+        "verified": 1,
+        "supported": 0,
+        "review_required": 2,
+        "abstained": 0,
+    }
+    assert {item["reason_code"] for item in payload["outcomes"]} == {
+        "exact_match",
+        "unknown_source_ref",
+        "evidence_not_found",
+    }
+    assert all(
+        item["provenance_id"] is None
+        for item in payload["outcomes"]
+        if item["outcome"] == "review_required"
+    )
+    assert db.query(ExtractionOutcome).filter_by(job_id=job.id).count() == 3
+    assert db.query(Highlight).filter(Highlight.text.in_(["Wrong-source candidate.", "Unmatched candidate."])).count() == 0
+
+
+def test_empty_and_malformed_provider_outputs_have_first_class_outcomes(client, auth, db):
+    class EmptyProvider(FixtureProvider):
+        def extract(self, sources):
+            return CandidateBatch()
+
+    class MalformedProvider(FixtureProvider):
+        def extract(self, sources):
+            return {"facts": [{"source_ref": "missing-required-fields"}]}
+
+    patient = db.get(__import__("app.models", fromlist=["Patient"]).Patient, "patient-amina")
+    principal = Principal("user-clinician", "clinic-demo", "clinician", None, "Dr. Maya Chen")
+    cases = [
+        (EmptyProvider(), "abstained", "provider_returned_no_candidates"),
+        (MalformedProvider(), "review_required", "provider_output_invalid"),
+    ]
+    for provider, expected_outcome, expected_reason in cases:
+        _, job = create_interaction(
+            db,
+            patient,
+            principal,
+            "doctor_consult",
+            "No eligible structured fact in this interaction.",
+            None,
+        )
+        process_job(job.id, __import__("app.database", fromlist=["SessionLocal"]).SessionLocal, provider)
+        payload = client.get(f"/api/jobs/{job.id}", headers=auth("clinician")).json()
+        assert payload["status"] == "complete"
+        assert payload["trust_summary"][expected_outcome] == 1
+        assert payload["outcomes"] == [
+            {
+                "candidate_index": None,
+                "outcome": expected_outcome,
+                "reason_code": expected_reason,
+                "provenance_id": None,
+            }
+        ]
+
+
+def test_redaction_policy_block_is_persisted_as_abstained(client, auth, db, monkeypatch):
+    class ProviderMustNotRun(FixtureProvider):
+        called = False
+
+        def extract(self, sources):
+            self.called = True
+            return CandidateBatch()
+
+    def block_provider_call(redacted_text, known_names):
+        raise ValueError("redaction_review_required")
+
+    monkeypatch.setattr("app.services.assert_no_known_phi", block_provider_call)
+    patient = db.get(__import__("app.models", fromlist=["Patient"]).Patient, "patient-amina")
+    principal = Principal("user-clinician", "clinic-demo", "clinician", None, "Dr. Maya Chen")
+    _, job = create_interaction(
+        db,
+        patient,
+        principal,
+        "doctor_consult",
+        "Amina Rahman submitted text requiring redaction review.",
+        None,
+    )
+    provider = ProviderMustNotRun()
+    process_job(job.id, __import__("app.database", fromlist=["SessionLocal"]).SessionLocal, provider)
+
+    payload = client.get(f"/api/jobs/{job.id}", headers=auth("clinician")).json()
+    assert provider.called is False
+    assert payload["status"] == "complete"
+    assert payload["trust_summary"]["abstained"] == 1
+    assert payload["outcomes"][0]["reason_code"] == "redaction_policy_blocked"

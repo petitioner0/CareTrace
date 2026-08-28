@@ -17,6 +17,7 @@ from .models import (
     Conflict,
     EntrySection,
     EntryVersion,
+    ExtractionOutcome,
     GlanceSnapshot,
     Highlight,
     Interaction,
@@ -63,6 +64,8 @@ async def lifespan(_: FastAPI):
     db = SessionLocal()
     try:
         seed_database(db)
+        for patient_id in db.scalars(select(Patient.id)):
+            rebuild_glance(db, patient_id)
         db.execute(text("PRAGMA optimize"))
         db.commit()
     finally:
@@ -218,7 +221,33 @@ def get_job(job_id: str, principal: Principal = Depends(current_principal), db: 
         raise HTTPException(status_code=404, detail="Job not found")
     if principal.role == "patient" and interaction.patient_id != principal.patient_id:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"id": job.id, "interaction_id": job.interaction_id, "status": job.status, "attempts": job.attempts, "error_code": job.error_code}
+    outcomes = list(
+        db.scalars(
+            select(ExtractionOutcome)
+            .where(ExtractionOutcome.job_id == job.id)
+            .order_by(ExtractionOutcome.created_at, ExtractionOutcome.id)
+        )
+    )
+    trust_summary = {key: 0 for key in ("verified", "supported", "review_required", "abstained")}
+    for outcome in outcomes:
+        trust_summary[outcome.outcome] += 1
+    return {
+        "id": job.id,
+        "interaction_id": job.interaction_id,
+        "status": job.status,
+        "attempts": job.attempts,
+        "error_code": job.error_code,
+        "trust_summary": trust_summary,
+        "outcomes": [
+            {
+                "candidate_index": outcome.candidate_index,
+                "outcome": outcome.outcome,
+                "reason_code": outcome.reason_code,
+                "provenance_id": outcome.provenance_edge_id if principal.role != "patient" else None,
+            }
+            for outcome in outcomes
+        ],
+    }
 
 
 @app.post("/api/jobs/{job_id}/retry", status_code=202)
