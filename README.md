@@ -4,6 +4,16 @@ CareTrace is a provenance-first longitudinal care note prototype built for the N
 
 > Synthetic data only. CareTrace is a collaboration and priority-support prototype, not a clinical decision support system and not a diagnostic tool.
 
+## Repository guide
+
+- `backend/app/`: data models, API, security, redaction, provider adapters and business rules.
+- `backend/tests/`: required micro-tests plus trust-boundary tests.
+- `frontend/src/`: English clinician/staff/admin and patient demo UI.
+- `DocSubmission/`: API contract, Markdown technical brief, demo script, demo video and submission-ready PDF.
+
+See [API.md](DocSubmission/API.md) for endpoint contracts and [DEMO_SCRIPT.md](DocSubmission/DEMO_SCRIPT.md) for a short recording sequence.
+
+
 ## What is implemented
 
 - Precomputed Glance view with up to five ranked, source-supported highlights and open actions.
@@ -109,11 +119,3 @@ python scripts/benchmark_glance.py
 
 The four required micro-test modules are included, plus the learned bonus `test_self_learning_importance.py`. Additional coverage checks PHI handling, `review_required`/`abstained` outcomes, span integrity and the risk floor boundary. The benchmark warms the API, inserts at least 500 patient timeline entries, performs 500 loopback requests and calculates P95 without invoking an LLM.
 
-## Repository guide
-
-- `backend/app/`: data models, API, security, redaction, provider adapters and business rules.
-- `backend/tests/`: required micro-tests plus trust-boundary tests.
-- `frontend/src/`: English clinician/staff/admin and patient demo UI.
-- `DocSubmission/`: API contract, Markdown technical brief, demo script and submission-ready PDF.
-
-See [API.md](DocSubmission/API.md) for endpoint contracts and [DEMO_SCRIPT.md](DocSubmission/DEMO_SCRIPT.md) for a short recording sequence.
