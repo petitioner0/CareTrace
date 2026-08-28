@@ -771,16 +771,18 @@ def rebuild_glance(db: Session, patient_id: str, viewer_id: str | None = None) -
             )
             latest_decision: dict[str, str] = {}
             latest_pin: dict[str, bool] = {}
+            latest_highlight: dict[str, bool] = {}
             for event in feedback:
                 if event.action in {"accept", "reject"}:
                     latest_decision[event.highlight_id] = event.action
                 if event.action in {"pin", "unpin"}:
                     latest_pin[event.highlight_id] = event.action == "pin"
-                if event.action == "highlight":
-                    highlighted_ids.add(event.highlight_id)
+                if event.action in {"highlight", "unhighlight"}:
+                    latest_highlight[event.highlight_id] = event.action == "highlight"
             rejected_ids = {key for key, action in latest_decision.items() if action == "reject"}
             accepted_ids = {key for key, action in latest_decision.items() if action == "accept"}
             pinned_ids = {key for key, is_pinned in latest_pin.items() if is_pinned}
+            highlighted_ids = {key for key, is_highlighted in latest_highlight.items() if is_highlighted}
         items = []
         for highlight in highlights:
             if highlight.id in rejected_ids and highlight.risk_floor < 90:
@@ -864,7 +866,7 @@ def apply_feedback(
         profile = PreferenceProfile(clinician_id=principal.id)
         db.add(profile)
         db.flush()
-    if action != "unpin":
+    if action not in {"unpin", "unhighlight"}:
         embedding = db.scalar(
             select(EmbeddingRecord).where(EmbeddingRecord.owner_type == "highlight", EmbeddingRecord.owner_id == highlight.id)
         )

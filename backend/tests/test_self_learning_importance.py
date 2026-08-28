@@ -111,3 +111,14 @@ def test_feedback_states_are_visible_to_the_actor(client, auth):
     assert current["accepted"] is False
     assert current["highlighted"] is True
     assert current["rejected"] is True
+
+    unhighlight = client.post(
+        f"/api/highlights/{target['id']}/feedback",
+        headers=headers,
+        json={"action": "unhighlight"},
+    )
+    assert unhighlight.status_code == 200
+    refreshed = client.get("/api/patients/patient-amina/glance", headers=headers).json()["items"]
+    current = next(item for item in refreshed if item["id"] == target["id"])
+    assert current["highlighted"] is False
+    assert current["rejected"] is True

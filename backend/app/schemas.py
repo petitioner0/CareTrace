@@ -45,7 +45,7 @@ class CommentUpdate(BaseModel):
 
 
 class FeedbackCreate(BaseModel):
-    action: Literal["accept", "reject", "pin", "unpin", "highlight", "comment", "edit", "confirm_warning"]
+    action: Literal["accept", "reject", "pin", "unpin", "highlight", "unhighlight", "comment", "edit", "confirm_warning"]
 
 
 class ConflictResolve(BaseModel):
