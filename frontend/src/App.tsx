@@ -332,6 +332,8 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
   const [tab, setTab] = useState<'glance' | 'timeline' | 'conflicts'>('glance')
   const [targetEntryId, setTargetEntryId] = useState<string | null>(null)
   const [pendingJumpId, setPendingJumpId] = useState<string | null>(null)
+  const [noteSubmitting, setNoteSubmitting] = useState(false)
+  const [noteStatus, setNoteStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -384,11 +386,23 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
 
   async function addNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const data = new FormData(event.currentTarget)
-    await api(`/patients/${patientId}/entries`, session.token, {
-      method: 'POST', body: JSON.stringify({ title: data.get('title'), content: data.get('content') }),
-    })
-    event.currentTarget.reset(); await refresh(); setTab('timeline')
+    const form = event.currentTarget
+    const data = new FormData(form)
+    setNoteSubmitting(true)
+    setNoteStatus(null)
+    try {
+      await api(`/patients/${patientId}/entries`, session.token, {
+        method: 'POST', body: JSON.stringify({ title: data.get('title'), content: data.get('content') }),
+      })
+      form.reset()
+      await refresh()
+      setTab('timeline')
+      setNoteStatus({ tone: 'success', message: 'Note added to the timeline.' })
+    } catch (reason) {
+      setNoteStatus({ tone: 'error', message: reason instanceof Error ? reason.message : 'Unable to add this note.' })
+    } finally {
+      setNoteSubmitting(false)
+    }
   }
 
   const patient = patients.find((item) => item.id === patientId)
@@ -436,7 +450,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
         {!loading && tab === 'timeline' && (
           <div className="timeline-layout">
             <section className="timeline-feed"><div className="section-title"><div><p className="eyebrow">LONGITUDINAL TIMELINE</p><h2>Every entry, in order</h2></div></div>{timeline.map((entry) => <TimelineCard key={entry.id} entry={entry} session={session} onRefresh={refresh} isTarget={entry.id === targetEntryId} />)}</section>
-            <aside><form className="note-form" onSubmit={addNote}><p className="eyebrow">ADD {session.user.role.toUpperCase()} NOTE</p><label>Title<input name="title" required placeholder="e.g. Follow-up call" /></label><label>Note<textarea name="content" required rows={5} placeholder="Add role-owned context…" /></label><button className="primary-button">Add to timeline</button><small>Other roles cannot overwrite this section.</small></form></aside>
+            <aside><form className="note-form" onSubmit={addNote}><p className="eyebrow">ADD {session.user.role.toUpperCase()} NOTE</p><label>Title<input name="title" required placeholder="e.g. Follow-up call" disabled={noteSubmitting} /></label><label>Note<textarea name="content" required rows={5} placeholder="Add role-owned context…" disabled={noteSubmitting} /></label><button className="primary-button" type="submit" disabled={noteSubmitting}>{noteSubmitting ? 'Adding note…' : 'Add to timeline'}</button>{noteStatus && <p className={`note-status ${noteStatus.tone}`} role={noteStatus.tone === 'error' ? 'alert' : 'status'} aria-live="polite">{noteStatus.message}</p>}<small>Other roles cannot overwrite this section.</small></form></aside>
           </div>
         )}
         {!loading && tab === 'conflicts' && (

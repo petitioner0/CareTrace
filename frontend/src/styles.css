@@ -166,6 +166,10 @@ h1, h2 { font-family: Georgia, 'Times New Roman', serif; }
 .note-form label { display: grid; gap: 5px; margin: 13px 0; color: var(--muted); font-size: 11px; }
 .note-form input, .note-form textarea { width: 100%; padding: 10px; border: 1px solid #cdd9d2; border-radius: 8px; resize: vertical; }
 .note-form button { width: 100%; }
+.note-form button:disabled, .note-form input:disabled, .note-form textarea:disabled { cursor: wait; opacity: .68; }
+.note-status { margin: 10px 0 0; padding: 9px 10px; border-radius: 7px; font-size: 11px; line-height: 1.4; }
+.note-status.success { background: var(--green-soft); color: var(--green); }
+.note-status.error { background: var(--red-soft); color: var(--red); }
 .note-form > small { display: block; margin-top: 10px; color: var(--muted); text-align: center; }
 .conflict-panel { max-width: 900px; }
 .conflict-panel article { margin-bottom: 13px; padding: 20px; border: 1px solid #ead7b8; border-left: 4px solid #d99832; border-radius: 11px; background: white; }
