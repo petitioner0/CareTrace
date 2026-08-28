@@ -140,7 +140,7 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
   )
 }
 
-function SourceDrawer({ source, onClose }: { source: Provenance; onClose: () => void }) {
+function SourceDrawer({ source, onClose, onJump }: { source: Provenance; onClose: () => void; onJump: (entryId: string) => void }) {
   const sources = source.sources?.length ? source.sources : [source]
   return (
     <div className="drawer-backdrop" onClick={onClose}>
@@ -163,10 +163,7 @@ function SourceDrawer({ source, onClose }: { source: Provenance; onClose: () => 
                 <div><dt>Immutable version</dt><dd>{item.source_entry_version_id.slice(0, 8)}</dd></div>
                 <div><dt>Original span</dt><dd>{item.original_start_offset}–{item.original_end_offset}</dd></div>
               </dl>
-              <button className="primary-button" onClick={() => {
-                document.getElementById(`entry-${item.source_entry_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                onClose()
-              }}>Jump to this timeline entry</button>
+              <button className="primary-button" onClick={() => onJump(item.source_entry_id)}>Jump to this timeline entry</button>
             </section>
           ))}
         </div>
@@ -224,7 +221,7 @@ function HighlightCard({ item, token, onRefresh, onSource }: {
   )
 }
 
-function TimelineCard({ entry, session, onRefresh }: { entry: TimelineEntry; session: Session; onRefresh: () => void }) {
+function TimelineCard({ entry, session, onRefresh, isTarget = false }: { entry: TimelineEntry; session: Session; onRefresh: () => void; isTarget?: boolean }) {
   const [showHistory, setShowHistory] = useState(false)
   const [versions, setVersions] = useState<Array<{ version: number; changed_section: string; created_at: string }>>([])
   const ownedKeys: Partial<Record<Role, string[]>> = {
@@ -261,7 +258,7 @@ function TimelineCard({ entry, session, onRefresh }: { entry: TimelineEntry; ses
   }
 
   return (
-    <article className="timeline-card" id={`entry-${entry.id}`}>
+    <article className={`timeline-card${isTarget ? ' timeline-target' : ''}`} id={`entry-${entry.id}`} tabIndex={-1}>
       <div className="timeline-marker" />
       <div className="timeline-meta">
         <span className={`entry-type ${entry.author_role}`}>{entry.entry_type.replaceAll('_', ' ')}</span>
@@ -321,6 +318,8 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
   const [conflicts, setConflicts] = useState<Conflict[]>([])
   const [source, setSource] = useState<Provenance | null>(null)
   const [tab, setTab] = useState<'glance' | 'timeline' | 'conflicts'>('glance')
+  const [targetEntryId, setTargetEntryId] = useState<string | null>(null)
+  const [pendingJumpId, setPendingJumpId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -347,7 +346,26 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
 
   useEffect(() => { refresh() }, [refresh])
 
+  useEffect(() => {
+    if (tab !== 'timeline' || loading || !pendingJumpId) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(`entry-${pendingJumpId}`)
+      if (!target) return
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      target.focus({ preventScroll: true })
+      setPendingJumpId(null)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [loading, pendingJumpId, tab, timeline])
+
   async function showSource(id: string) { setSource(await api<Provenance>(`/provenance/${id}`, session.token)) }
+
+  function jumpToTimelineEntry(entryId: string) {
+    setSource(null)
+    setTargetEntryId(entryId)
+    setPendingJumpId(entryId)
+    setTab('timeline')
+  }
 
   async function addNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -402,7 +420,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
         )}
         {!loading && tab === 'timeline' && (
           <div className="timeline-layout">
-            <section className="timeline-feed"><div className="section-title"><div><p className="eyebrow">LONGITUDINAL TIMELINE</p><h2>Every entry, in order</h2></div></div>{timeline.map((entry) => <TimelineCard key={entry.id} entry={entry} session={session} onRefresh={refresh} />)}</section>
+            <section className="timeline-feed"><div className="section-title"><div><p className="eyebrow">LONGITUDINAL TIMELINE</p><h2>Every entry, in order</h2></div></div>{timeline.map((entry) => <TimelineCard key={entry.id} entry={entry} session={session} onRefresh={refresh} isTarget={entry.id === targetEntryId} />)}</section>
             <aside><form className="note-form" onSubmit={addNote}><p className="eyebrow">ADD {session.user.role.toUpperCase()} NOTE</p><label>Title<input name="title" required placeholder="e.g. Follow-up call" /></label><label>Note<textarea name="content" required rows={5} placeholder="Add role-owned context…" /></label><button className="primary-button">Add to timeline</button><small>Other roles cannot overwrite this section.</small></form></aside>
           </div>
         )}
@@ -410,7 +428,7 @@ function CareWorkspace({ session, onLogout }: { session: Session; onLogout: () =
           <section className="conflict-panel"><div className="section-title"><div><p className="eyebrow">HUMAN REVIEW QUEUE</p><h2>Conflicting clinical facts</h2></div></div>{conflicts.map((conflict) => <article key={conflict.id}><div><span className={`badge ${conflict.status === 'open' ? 'risk-high' : 'support'}`}>{conflict.status}</span><b>{conflict.entity_type} conflict</b></div><p>{conflict.fact_a.quote}</p><p>{conflict.fact_b.quote}</p><small>CareTrace flags the conflict; only a clinician can choose the authoritative fact.</small></article>)}</section>
         )}
       </main>
-      {source && <SourceDrawer source={source} onClose={() => setSource(null)} />}
+      {source && <SourceDrawer source={source} onClose={() => setSource(null)} onJump={jumpToTimelineEntry} />}
     </div>
   )
 }
